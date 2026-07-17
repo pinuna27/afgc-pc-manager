@@ -1,0 +1,20 @@
+{
+  "vJoy": {
+    "repository": "BrunnerInnovation/vJoy",
+    "releaseTag": "v2.2.2.0",
+    "version": "2.2.2.0",
+    "assetName": "vJoySetup_v2.2.2.0_Win10_Win11.exe",
+    "sha256": "EF569A3105CD301B89580F18F60C66B339E95296ACF2C0DFCAF4B4BBF8AB68FE",
+    "expectedPublisher": "Brunner Elektronik AG",
+    "mayRequireRestart": true
+  },
+  "hidHide": {
+    "repository": "nefarius/HidHide",
+    "releaseTag": "v1.5.230.0",
+    "version": "1.5.230",
+    "assetName": "HidHide_1.5.230_x64.exe",
+    "sha256": "F4BBBCB82E6258641B887C74BC81C4C5F66E4AA811808DFC304347687B7605F6",
+    "expectedPublisher": "Nefarius Software Solutions e.U.",
+    "mayRequireRestart": true
+  }
+}

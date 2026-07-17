@@ -1,0 +1,28 @@
+<Solution>
+  <Folder Name="/installer/">
+    <Project Path="installer/AFGCPCManager.Bootstrapper/AFGCPCManager.Bootstrapper.csproj" />
+    <Project Path="installer/AFGCPCManager.Setup.Core/AFGCPCManager.Setup.Core.csproj" />
+    <Project Path="installer/AFGCPCManager.Uninstaller/AFGCPCManager.Uninstaller.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AFGCPCManager.App/AFGCPCManager.App.csproj" />
+    <Project Path="src/AFGCPCManager.Core/AFGCPCManager.Core.csproj" />
+    <Project Path="src/AFGCPCManager.HidHide/AFGCPCManager.HidHide.csproj" />
+    <Project Path="src/AFGCPCManager.VJoy/AFGCPCManager.VJoy.csproj" />
+    <Project Path="src/AFGCPCManager.Windows/AFGCPCManager.Windows.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AFGCPCManager.Core.Tests/AFGCPCManager.Core.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.HidHide.Tests/AFGCPCManager.HidHide.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.Setup.Core.Tests/AFGCPCManager.Setup.Core.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.VJoy.Tests/AFGCPCManager.VJoy.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.Windows.Tests/AFGCPCManager.Windows.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/FireController.Capture/FireController.Capture.csproj" />
+    <Project Path="tools/FireController.DeviceProbe/FireController.DeviceProbe.csproj" />
+    <Project Path="tools/ReleaseManifest.Builder/ReleaseManifest.Builder.csproj" />
+    <Project Path="tools/ReleaseManifest.Signer/ReleaseManifest.Signer.csproj" />
+    <Project Path="tools/ReleaseSigning.Keygen/ReleaseSigning.Keygen.csproj" />
+  </Folder>
+</Solution>

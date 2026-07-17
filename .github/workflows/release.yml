@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to package, without the leading v"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_NOLOGO: true
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Resolve and validate version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { $env:INPUT_VERSION.TrimStart('v') }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid stable release version: $version" }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'The tag and package version differ.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Require manifest signing key
+        shell: pwsh
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.AFGC_RELEASE_SIGNING_KEY }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_SIGNING_KEY)) { throw 'AFGC_RELEASE_SIGNING_KEY is not configured.' }
+
+      - name: Restore and test
+        run: |
+          dotnet restore AFGCPCManager.slnx
+          dotnet build AFGCPCManager.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+          dotnet test AFGCPCManager.slnx --configuration Release --no-build
+
+      - name: Publish application payload
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts/release | Out-Null
+          $common = @('--configuration','Release','--runtime','win-x64','--self-contained','true','-p:PublishSingleFile=true','-p:DebugType=None','-p:DebugSymbols=false',"-p:Version=${{ steps.version.outputs.version }}")
+          dotnet publish src/AFGCPCManager.App/AFGCPCManager.App.csproj @common --output artifacts/payload
+          dotnet publish installer/AFGCPCManager.Uninstaller/AFGCPCManager.Uninstaller.csproj @common --output artifacts/payload
+          Compress-Archive -Path artifacts/payload/* -DestinationPath artifacts/release/AFGCPCManager-x64.zip
+
+      - name: Publish online setup
+        shell: pwsh
+        run: |
+          dotnet publish installer/AFGCPCManager.Bootstrapper/AFGCPCManager.Bootstrapper.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:Version=${{ steps.version.outputs.version }} --output artifacts/setup
+          Copy-Item artifacts/setup/AFGCPCManager.Setup.exe artifacts/release/AFGCPCManager-Setup-x64.exe
+
+      - name: Build and sign release manifest
+        shell: pwsh
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.AFGC_RELEASE_SIGNING_KEY }}
+        run: |
+          New-Item -ItemType Directory -Force .release-secrets | Out-Null
+          Set-Content -LiteralPath .release-secrets/manifest-private.pem -Value $env:RELEASE_SIGNING_KEY -NoNewline
+          dotnet run --project tools/ReleaseManifest.Builder/ReleaseManifest.Builder.csproj --configuration Release --no-build -- ${{ steps.version.outputs.version }} release-dependencies.json artifacts/release/release-manifest.json artifacts/release/AFGCPCManager-Setup-x64.exe artifacts/release/AFGCPCManager-x64.zip
+          dotnet run --project tools/ReleaseManifest.Signer/ReleaseManifest.Signer.csproj --configuration Release --no-build -- .release-secrets/manifest-private.pem installer/ReleaseSigning/afgc-release-public.pem artifacts/release/release-manifest.json artifacts/release/release-manifest.sig
+          Remove-Item -LiteralPath .release-secrets/manifest-private.pem -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AFGC-PC-Manager-${{ steps.version.outputs.version }}
+          path: artifacts/release/*
+          if-no-files-found: error
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: false
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/release/AFGCPCManager-Setup-x64.exe
+            artifacts/release/AFGCPCManager-x64.zip
+            artifacts/release/release-manifest.json
+            artifacts/release/release-manifest.sig

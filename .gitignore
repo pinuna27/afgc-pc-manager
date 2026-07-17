@@ -1,0 +1,37 @@
+# .NET build output
+**/bin/
+**/obj/
+artifacts/
+TestResults/
+
+# IDE and user-specific state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Local diagnostics may contain device paths or identifiers.
+captures/
+*.log
+
+# Locally cloned upstream projects used only for research.
+external/
+
+# Local design history and working notes; not part of the public project.
+.project-notes/
+
+# Installer/download staging
+downloads/
+packages/
+*.tmp
+
+# Release-signing private keys and local signing material
+.secrets/
+*.private.pem
+
+# Operating-system metadata
+Thumbs.db
+Desktop.ini
+.DS_Store

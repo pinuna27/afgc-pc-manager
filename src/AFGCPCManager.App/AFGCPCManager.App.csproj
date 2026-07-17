@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>AFGCPCManager</AssemblyName>
+    <RootNamespace>AFGCPCManager.App</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AFGCPCManager.Core\AFGCPCManager.Core.csproj" />
+    <ProjectReference Include="..\AFGCPCManager.VJoy\AFGCPCManager.VJoy.csproj" />
+    <ProjectReference Include="..\AFGCPCManager.HidHide\AFGCPCManager.HidHide.csproj" />
+    <ProjectReference Include="..\AFGCPCManager.Windows\AFGCPCManager.Windows.csproj" />
+  </ItemGroup>
+</Project>
