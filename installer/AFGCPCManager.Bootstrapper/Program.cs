@@ -52,6 +52,7 @@ internal static class Program
     private static async Task<int> ApplyArchiveAsync(string archive, string destination, Version version, string? manifestPath, string? signaturePath)
     {
         if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, Environment.GetCommandLineArgs().Skip(1));
+        Console.WriteLine("Verifying the AFGC PC Manager release...");
         ReleaseManifest? localManifest = null;
         if (manifestPath is not null || signaturePath is not null)
         {
@@ -61,6 +62,7 @@ internal static class Program
         }
         DurableSetupBundle durable = DurableSetupStaging.Stage(version, Environment.ProcessPath!, archive, manifestPath, signaturePath);
         archive = durable.ArchivePath; manifestPath = durable.ManifestPath; signaturePath = durable.SignaturePath;
+        Console.WriteLine("Preparing application files...");
         await StopRunningApplicationAsync(destination); string payload = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "payload", Guid.NewGuid().ToString("N"));
         try
         {
@@ -109,23 +111,36 @@ internal static class Program
         if (manifest.HidHide is DependencyRelease hidHide) await AddPackageAsync(DependencyId.HidHide, hidHide);
         if (packages.Count == 0) return false;
         if (hasInstallerActions) registerResume();
-        var coordinator = new DependencyCoordinator(detector, new DependencyInstaller(), journalStore);
+        var coordinator = new DependencyCoordinator(detector, new DependencyInstaller(), journalStore, Console.WriteLine);
         DependencyExecutionResult result = await coordinator.EnsureAsync(journalPath, packages, allowUpdates: true);
         if (!result.RestartRequired)
         {
             InstallationJournal updatedJournal = await new JournalStore().LoadAsync(Path.Combine(destination, "install-journal.json"))
                 ?? throw new InvalidOperationException("The installation journal is missing after dependency setup.");
             if (updatedJournal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
+            {
+                Console.WriteLine("Preparing the virtual controller output...");
                 await new VJoyDeviceProvisioner().EnsureOneCompatibleDeviceAsync();
+                Console.WriteLine("Virtual controller output is ready.");
+            }
         }
         return result.RestartRequired;
 
         async Task AddPackageAsync(DependencyId id, DependencyRelease dependency)
         {
+            string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
+            Console.WriteLine($"Checking for {name}...");
             Version target = Version.Parse(dependency.Version);
-            DependencyPlan plan = DependencyPlanBuilder.Build(detector.Detect(id), target, journal);
+            DependencyState state = detector.Detect(id);
+            string detectionMessage = state.IsInstalled
+                ? $"Found {name}{(state.Version is null ? "." : $" {state.Version}.")}"
+                : $"{name} is not installed.";
+            Console.WriteLine(detectionMessage);
+            DependencyPlan plan = DependencyPlanBuilder.Build(state, target, journal);
             bool needsInstaller = plan.Action is DependencyAction.Install or DependencyAction.Repair or DependencyAction.Update;
+            if (needsInstaller) Console.WriteLine($"Downloading the verified {name} installer...");
             string installerPath = needsInstaller ? await client.DownloadDependencyAsync(dependency, staging) : string.Empty;
+            if (!needsInstaller) Console.WriteLine($"{name} is ready; no installation is needed.");
             hasInstallerActions |= needsInstaller;
             packages[id] = (target, installerPath);
         }

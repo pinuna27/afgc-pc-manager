@@ -8,7 +8,8 @@ public sealed record DependencyExecutionResult(IReadOnlyList<DependencyPlan> Pla
 public sealed class DependencyCoordinator(
     IDependencyDetector detector,
     IDependencyInstaller installer,
-    JournalStore journalStore)
+    JournalStore journalStore,
+    Action<string>? progress = null)
 {
     public async Task<DependencyExecutionResult> EnsureAsync(
         string journalPath,
@@ -47,6 +48,14 @@ public sealed class DependencyCoordinator(
                 || (allowUpdates && plan.Action == DependencyAction.Update);
             if (!execute) continue;
 
+            string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
+            progress?.Invoke(plan.Action switch
+            {
+                DependencyAction.Install => $"Installing {name}... Follow the installer prompts.",
+                DependencyAction.Update => $"Updating {name}... Follow the installer prompts.",
+                _ => $"Repairing {name}... Follow the installer prompts."
+            });
+
             journal = journal with
             {
                 PendingDependencyOperation = new(id.ToString(), target.ToString(), installerPath,
@@ -63,6 +72,10 @@ public sealed class DependencyCoordinator(
             DependencyInstallResult result = await installer.RunInteractiveAsync(installerPath, cancellationToken);
             if (!result.Succeeded)
                 throw new InvalidOperationException($"The {id} installer exited with code {result.ExitCode}.");
+
+            progress?.Invoke(result.RestartRequired
+                ? $"{name} finished installing. Windows must restart before setup can continue."
+                : $"{name} finished installing successfully.");
 
             DependencyState after = detector.Detect(id);
             if (!after.IsInstalled && !result.RestartRequired)
