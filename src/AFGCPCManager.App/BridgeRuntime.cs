@@ -140,7 +140,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             if (settings.AutomaticallyInstallUpdates && available.Any(x => x.Component == ReleaseComponent.AfgcPcManager))
             {
                 string setup = Path.Combine(AppContext.BaseDirectory, "AFGCPCManager.Setup.exe");
-                if (File.Exists(setup)) { Process.Start(new ProcessStartInfo(setup, "--update") { UseShellExecute = true }); RecordEvent("Verified automatic application update started."); }
+                if (File.Exists(setup)) { Process.Start(new ProcessStartInfo(setup, "--update --wizard-run") { UseShellExecute = true }); RecordEvent("Verified automatic application update started."); }
                 else RecordEvent("Automatic update could not start because Repair Setup is unavailable.");
             }
         }

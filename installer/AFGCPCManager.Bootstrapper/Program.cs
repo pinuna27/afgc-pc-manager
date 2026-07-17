@@ -5,14 +5,39 @@ using AFGCPCManager.Setup.Core.Models;
 using AFGCPCManager.Setup.Core.Security;
 using AFGCPCManager.Setup.Core.Updates;
 using AFGCPCManager.VJoy;
+using System.Runtime.InteropServices;
 
 namespace AFGCPCManager.Bootstrapper;
 
 internal static class Program
 {
     private const string SetupAsset = "AFGCPCManager-Setup-x64.exe", PayloadAsset = "AFGCPCManager-x64.zip";
-    private static async Task<int> Main(string[] args)
+    internal static Action<string>? Progress { get; set; }
+    internal static string? LastError { get; private set; }
+    internal static bool DelegatedToElevatedWizard { get; private set; }
+    private static bool CliMode { get; set; }
+
+    [STAThread]
+    private static int Main(string[] args)
     {
+        if (Has(args, "--cli"))
+        {
+            CliMode = true;
+            _ = AttachConsole(unchecked((uint)-1));
+            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+            Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+            return RunCoreAsync(args.Where(x => !x.Equals("--cli", StringComparison.OrdinalIgnoreCase)).ToArray()).GetAwaiter().GetResult();
+        }
+        ApplicationConfiguration.Initialize();
+        using var wizard = new SetupWizardForm(args);
+        Application.Run(wizard);
+        return wizard.ResultCode;
+    }
+
+    internal static async Task<int> RunCoreAsync(string[] args)
+    {
+        LastError = null;
+        DelegatedToElevatedWizard = false;
         try
         {
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("AFGC PC Manager supports Windows only.");
@@ -30,13 +55,13 @@ internal static class Program
             try
             {
                 bool restartRequired = await EnsureDependenciesAsync(destination, version, null,
-                    () => WindowsSetupResumeRegistration.Register(Environment.ProcessPath!, ["--payload", payload, "--install-dir", destination]));
+                    () => WindowsSetupResumeRegistration.Register(Environment.ProcessPath!, ["--wizard-run", "--payload", payload, "--install-dir", destination]));
                 if (restartRequired) return 3010;
                 WindowsSetupResumeRegistration.Unregister(); return 0;
             }
             catch { await RemoveResumeUnlessRestartRequiredAsync(destination); throw; }
         }
-        catch (Exception ex) { Console.Error.WriteLine($"Setup failed: {ex.Message}"); return 1; }
+        catch (Exception ex) { LastError = ex.Message; Report($"Setup failed: {ex.Message}"); return 1; }
     }
 
     private static async Task<int> DownloadAndLaunchAsync(string destination, bool repair)
@@ -46,13 +71,21 @@ internal static class Program
         VerifiedRelease release = await client.GetLatestAsync("pinuna27", "afgc-pc-manager");
         string staging = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "updates", release.Version.ToString()); Directory.CreateDirectory(staging);
         string setup = await client.DownloadAssetAsync(release, SetupAsset, staging); string archive = await client.DownloadAssetAsync(release, PayloadAsset, staging);
-        return Elevation.RelaunchAsAdministrator(setup, ["--apply-archive", archive, "--version", release.Version.ToString(), "--install-dir", destination]);
+        DelegatedToElevatedWizard = !CliMode;
+        string mode = CliMode ? "--cli" : "--wizard-run";
+        return Elevation.RelaunchAsAdministrator(setup, [mode, "--apply-archive", archive, "--version", release.Version.ToString(), "--install-dir", destination]);
     }
 
     private static async Task<int> ApplyArchiveAsync(string archive, string destination, Version version, string? manifestPath, string? signaturePath)
     {
-        if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, Environment.GetCommandLineArgs().Skip(1));
-        Console.WriteLine("Verifying the AFGC PC Manager release...");
+        if (!Elevation.IsAdministrator())
+        {
+            DelegatedToElevatedWizard = !CliMode;
+            IEnumerable<string> elevatedArguments = Environment.GetCommandLineArgs().Skip(1);
+            if (!CliMode) elevatedArguments = elevatedArguments.Append("--wizard-run");
+            return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, elevatedArguments);
+        }
+        Report("Verifying the AFGC PC Manager release...");
         ReleaseManifest? localManifest = null;
         if (manifestPath is not null || signaturePath is not null)
         {
@@ -62,7 +95,7 @@ internal static class Program
         }
         DurableSetupBundle durable = DurableSetupStaging.Stage(version, Environment.ProcessPath!, archive, manifestPath, signaturePath);
         archive = durable.ArchivePath; manifestPath = durable.ManifestPath; signaturePath = durable.SignaturePath;
-        Console.WriteLine("Preparing application files...");
+        Report("Preparing application files...");
         await StopRunningApplicationAsync(destination); string payload = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "payload", Guid.NewGuid().ToString("N"));
         try
         {
@@ -70,11 +103,11 @@ internal static class Program
             await InstallPayloadAsync(payload, destination, version);
             bool restartRequired = await EnsureDependenciesAsync(destination, version, localManifest, () =>
             {
-                var resume = new List<string> { "--apply-archive", archive, "--version", version.ToString(), "--install-dir", destination };
+                var resume = new List<string> { "--wizard-run", "--apply-archive", archive, "--version", version.ToString(), "--install-dir", destination };
                 if (manifestPath is not null) resume.AddRange(["--manifest", manifestPath, "--signature", signaturePath!]);
                 WindowsSetupResumeRegistration.Register(durable.SetupPath, resume);
             });
-            if (restartRequired) { Console.WriteLine("A restart is required before setup can continue."); return 3010; }
+            if (restartRequired) { Report("A restart is required before setup can continue."); return 3010; }
             WindowsSetupResumeRegistration.Unregister();
             DurableSetupStaging.Cleanup(durable);
             StartApplicationUnelevated(destination); return 0;
@@ -111,7 +144,7 @@ internal static class Program
         if (manifest.HidHide is DependencyRelease hidHide) await AddPackageAsync(DependencyId.HidHide, hidHide);
         if (packages.Count == 0) return false;
         if (hasInstallerActions) registerResume();
-        var coordinator = new DependencyCoordinator(detector, new DependencyInstaller(), journalStore, Console.WriteLine);
+        var coordinator = new DependencyCoordinator(detector, new DependencyInstaller(), journalStore, Report);
         DependencyExecutionResult result = await coordinator.EnsureAsync(journalPath, packages, allowUpdates: true);
         if (!result.RestartRequired)
         {
@@ -119,9 +152,9 @@ internal static class Program
                 ?? throw new InvalidOperationException("The installation journal is missing after dependency setup.");
             if (updatedJournal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
             {
-                Console.WriteLine("Preparing the virtual controller output...");
+                Report("Preparing the virtual controller output...");
                 await new VJoyDeviceProvisioner().EnsureOneCompatibleDeviceAsync();
-                Console.WriteLine("Virtual controller output is ready.");
+                Report("Virtual controller output is ready.");
             }
         }
         return result.RestartRequired;
@@ -129,18 +162,18 @@ internal static class Program
         async Task AddPackageAsync(DependencyId id, DependencyRelease dependency)
         {
             string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
-            Console.WriteLine($"Checking for {name}...");
+            Report($"Checking for {name}...");
             Version target = Version.Parse(dependency.Version);
             DependencyState state = detector.Detect(id);
             string detectionMessage = state.IsInstalled
                 ? $"Found {name}{(state.Version is null ? "." : $" {state.Version}.")}"
                 : $"{name} is not installed.";
-            Console.WriteLine(detectionMessage);
+            Report(detectionMessage);
             DependencyPlan plan = DependencyPlanBuilder.Build(state, target, journal);
             bool needsInstaller = plan.Action is DependencyAction.Install or DependencyAction.Repair or DependencyAction.Update;
-            if (needsInstaller) Console.WriteLine($"Downloading the verified {name} installer...");
+            if (needsInstaller) Report($"Downloading the verified {name} installer...");
             string installerPath = needsInstaller ? await client.DownloadDependencyAsync(dependency, staging) : string.Empty;
-            if (!needsInstaller) Console.WriteLine($"{name} is ready; no installation is needed.");
+            if (!needsInstaller) Report($"{name} is ready; no installation is needed.");
             hasInstallerActions |= needsInstaller;
             packages[id] = (target, installerPath);
         }
@@ -156,7 +189,7 @@ internal static class Program
             == DependencyOperationPhase.RestartRequired;
     private static async Task InstallPayloadAsync(string payload, string destination, Version version)
     {
-        Console.WriteLine("Installing AFGC PC Manager..."); await new ApplicationInstaller(new JournalStore()).InstallAsync(payload, destination, version); WindowsInstallationRegistration.Register(destination, version); Console.WriteLine($"Installed successfully to {destination}");
+        Report("Installing AFGC PC Manager..."); await new ApplicationInstaller(new JournalStore()).InstallAsync(payload, destination, version); WindowsInstallationRegistration.Register(destination, version); Report($"Installed successfully to {destination}");
     }
     private static async Task<Version?> InstalledVersionAsync(string destination)
     {
@@ -186,4 +219,6 @@ internal static class Program
     }
     private static bool Has(string[] args, string key) => args.Contains(key, StringComparer.OrdinalIgnoreCase);
     private static string? Get(string[] args, string key) { int index = Array.FindIndex(args, x => x.Equals(key, StringComparison.OrdinalIgnoreCase)); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
+    private static void Report(string message) { Console.WriteLine(message); Progress?.Invoke(message); }
+    [DllImport("kernel32.dll")] private static extern bool AttachConsole(uint processId);
 }
