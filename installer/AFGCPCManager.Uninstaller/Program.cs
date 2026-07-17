@@ -42,12 +42,15 @@ internal static class Program
             string continuationExecutable = EnsureDurableContinuationCopy();
             var continuationArguments = args.ToList();
             string application = Path.Combine(detachedRoot, "AFGCPCManager.exe");
-            if (File.Exists(application))
+            bool hidHideInstalled = new WindowsDependencyDetector().Detect(DependencyId.HidHide).IsInstalled;
+            if (File.Exists(application) && hidHideInstalled)
             {
+                Console.WriteLine("Restoring physical controller visibility...");
                 using Process recovery = Process.Start(new ProcessStartInfo(application, "--recover-hidhide") { UseShellExecute = false }) ?? throw new InvalidOperationException("Could not start physical-controller recovery.");
                 await recovery.WaitForExitAsync();
                 if (recovery.ExitCode != 0) throw new InvalidOperationException("Physical-controller recovery failed; uninstall was stopped for safety.");
             }
+            else if (!hidHideInstalled) Console.WriteLine("HidHide is not installed; physical controllers are already visible.");
             var dependencyUninstaller = new RegisteredDependencyUninstaller();
             bool restartRequired = false;
             if (Has(args, "--remove-vjoy"))
