@@ -71,7 +71,15 @@ public sealed class DependencyCoordinator(
 
             DependencyInstallResult result = await installer.RunInteractiveAsync(installerPath, cancellationToken);
             if (!result.Succeeded)
-                throw new InvalidOperationException($"The {id} installer exited with code {result.ExitCode}.");
+            {
+                DependencyState detectedAfterExit = detector.Detect(id);
+                bool targetInstalled = detectedAfterExit.IsInstalled &&
+                    (detectedAfterExit.Version is null || detectedAfterExit.Version >= target);
+                if (!targetInstalled)
+                    throw new InvalidOperationException($"The {id} installer exited with code {result.ExitCode}.");
+                result = new(true, true, result.ExitCode);
+                progress?.Invoke($"{name} installed successfully and requires a Windows restart.");
+            }
 
             progress?.Invoke(result.RestartRequired
                 ? $"{name} finished installing. Windows must restart before setup can continue."

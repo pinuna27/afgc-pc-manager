@@ -58,6 +58,26 @@ public sealed class DependencyCoordinatorTests : IDisposable
     }
 
     [Fact]
+    public async Task TreatsNonstandardExitAsRestartWhenTargetVersionWasInstalled()
+    {
+        string journalPath = await CreateJournalAsync();
+        var detector = new FakeDetector(new(DependencyId.HidHide, false));
+        var installer = new FakeInstaller(
+            () => detector.State = new(DependencyId.HidHide, true, new(1, 5, 230)),
+            new(false, false, 1));
+        var coordinator = new DependencyCoordinator(detector, installer, new JournalStore());
+
+        DependencyExecutionResult result = await coordinator.EnsureAsync(journalPath,
+            new Dictionary<DependencyId, (Version, string)> { [DependencyId.HidHide] = (new(1, 5, 230), "hidhide.exe") }, true,
+            TestContext.Current.CancellationToken);
+
+        InstallationJournal journal = (await new JournalStore().LoadAsync(journalPath, TestContext.Current.CancellationToken))!;
+        Assert.True(result.RestartRequired);
+        Assert.Contains("HidHide", journal.DependenciesInstalledBySetup);
+        Assert.Equal(DependencyOperationPhase.RestartRequired, journal.PendingDependencyOperation!.Phase);
+    }
+
+    [Fact]
     public async Task ResumeClearsRestartOperationWhenDependencyIsDetected()
     {
         string journalPath = Path.Combine(_root, "install-journal.json");
