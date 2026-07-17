@@ -9,8 +9,8 @@ internal sealed class UninstallProgressForm : Form
     private readonly Label _heading = new() { Text = "Uninstalling AFGC PC Manager", Dock = DockStyle.Top, Height = 55, Font = new Font(SystemFonts.DefaultFont.FontFamily, 16, FontStyle.Bold) };
     private readonly Label _description = new() { Text = "Please wait while setup safely restores controller visibility and removes the selected components.", Dock = DockStyle.Top, Height = 65 };
     private readonly TextBox _progress = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
-    private readonly Button _primary = new() { Text = "Please wait...", Width = 105, Enabled = false };
-    private readonly Button _secondary = new() { Text = "Cancel", Width = 105, Enabled = false };
+    private readonly Button _primary = new() { Text = "Please wait...", AutoSize = true, MinimumSize = new(96, 0), Enabled = false };
+    private readonly Button _secondary = new() { Text = "Cancel", AutoSize = true, MinimumSize = new(96, 0), Enabled = false };
     private bool _running = true;
     internal int ResultCode { get; private set; }
 
@@ -18,7 +18,7 @@ internal sealed class UninstallProgressForm : Form
     {
         _args = args; _operation = operation;
         Text = "AFGC PC Manager Uninstall"; StartPosition = FormStartPosition.CenterScreen; FormBorderStyle = FormBorderStyle.FixedDialog;
-        MaximizeBox = false; MinimizeBox = false; ClientSize = new(680, 430); AutoScaleMode = AutoScaleMode.Dpi;
+        MaximizeBox = false; MinimizeBox = false; ClientSize = new(780, 540); MinimumSize = new(780, 540); AutoScaleMode = AutoScaleMode.Dpi;
         var content = new Panel { Dock = DockStyle.Fill, Padding = new(24) }; content.Controls.Add(_progress); content.Controls.Add(_description); content.Controls.Add(_heading);
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 58, Padding = new(10), FlowDirection = FlowDirection.RightToLeft };
         buttons.Controls.AddRange([_secondary, _primary]); Controls.Add(content); Controls.Add(buttons);

@@ -10,9 +10,9 @@ internal sealed class SetupWizardForm : Form
     private readonly TextBox _progress = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, BackColor = SystemColors.Window };
     private readonly TextBox _destination = new() { Dock = DockStyle.Top };
     private readonly Panel _content = new() { Dock = DockStyle.Fill, Padding = new(24) };
-    private readonly Button _back = new() { Text = "< Back", Width = 92, Enabled = false };
-    private readonly Button _next = new() { Text = "Install", Width = 92 };
-    private readonly Button _cancel = new() { Text = "Cancel", Width = 92 };
+    private readonly Button _back = WizardButton("< Back", enabled: false);
+    private readonly Button _next = WizardButton("Install");
+    private readonly Button _cancel = WizardButton("Cancel");
     private bool _running;
     private WizardPage _page = WizardPage.Welcome;
     internal int ResultCode { get; private set; }
@@ -22,7 +22,7 @@ internal sealed class SetupWizardForm : Form
         _originalArgs = args.Where(x => !x.Equals("--wizard-run", StringComparison.OrdinalIgnoreCase)).ToArray();
         Text = "AFGC PC Manager Setup"; StartPosition = FormStartPosition.CenterScreen;
         FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
-        ClientSize = new(680, 470); AutoScaleMode = AutoScaleMode.Dpi;
+        ClientSize = new(780, 560); MinimumSize = new(780, 560); AutoScaleMode = AutoScaleMode.Dpi;
 
         var banner = new Panel { Dock = DockStyle.Top, Height = 78, BackColor = Color.FromArgb(245, 247, 250), Padding = new(22, 14, 22, 8) };
         banner.Controls.Add(new Label { Text = "AFGC PC Manager", Dock = DockStyle.Fill, Font = new Font(SystemFonts.DefaultFont.FontFamily, 18, FontStyle.Bold), TextAlign = ContentAlignment.MiddleLeft });
@@ -42,9 +42,11 @@ internal sealed class SetupWizardForm : Form
         _heading.Text = OperationTitle();
         _description.Text = "Setup will install AFGC PC Manager and check the verified vJoy and HidHide components required for controller compatibility.";
         _destination.Text = Get(_originalArgs, "--install-dir") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "AFGC PC Manager");
-        var locationLabel = new Label { Text = "Install location", AutoSize = true, Dock = DockStyle.Top, Padding = new(0, 8, 0, 5) };
-        var details = new Label { Text = "You may be asked to approve administrator access and complete the signed vJoy and HidHide vendor wizards.", AutoSize = false, Dock = DockStyle.Top, Height = 65, Padding = new(0, 18, 0, 0) };
-        _content.Controls.Add(details); _content.Controls.Add(_destination); _content.Controls.Add(locationLabel); _content.Controls.Add(_description); _content.Controls.Add(_heading);
+        var locationLabel = new Label { Text = "Install location", AutoSize = true, Anchor = AnchorStyles.Left };
+        var details = new Label { Text = "You may be asked to approve administrator access and complete the signed vJoy and HidHide vendor wizards.", AutoSize = false, Dock = DockStyle.Fill, Padding = new(0, 18, 0, 0) };
+        var layout = CreateLayout(52, 86, 30, 34);
+        layout.Controls.Add(_heading, 0, 0); layout.Controls.Add(_description, 0, 1); layout.Controls.Add(locationLabel, 0, 2);
+        layout.Controls.Add(_destination, 0, 3); layout.Controls.Add(details, 0, 4); _content.Controls.Add(layout);
     }
 
     private async Task BeginInstallAsync()
@@ -65,7 +67,7 @@ internal sealed class SetupWizardForm : Form
     private void ShowProgress()
     {
         _page = WizardPage.Progress; _content.Controls.Clear(); _heading.Text = "Installing"; _description.Text = "Please wait while setup prepares AFGC PC Manager and its controller components.";
-        _progress.Clear(); _content.Controls.Add(_progress); _content.Controls.Add(_description); _content.Controls.Add(_heading);
+        _progress.Clear(); var layout = CreateLayout(52, 74); layout.Controls.Add(_heading, 0, 0); layout.Controls.Add(_description, 0, 1); layout.Controls.Add(_progress, 0, 2); _content.Controls.Add(layout);
     }
 
     private void ShowComplete()
@@ -91,7 +93,7 @@ internal sealed class SetupWizardForm : Form
     private void ShowMessage(string heading, string description)
     {
         _content.Controls.Clear(); _heading.Text = heading; _description.Text = description;
-        _content.Controls.Add(_description); _content.Controls.Add(_heading);
+        var layout = CreateLayout(52); layout.Controls.Add(_heading, 0, 0); layout.Controls.Add(_description, 0, 1); _content.Controls.Add(layout);
     }
 
     private void AppendProgress(string message)
@@ -110,5 +112,16 @@ internal sealed class SetupWizardForm : Form
         else if (_page is WizardPage.Complete or WizardPage.Error) Close();
     }
     private void CancelClicked(object? sender, EventArgs e) { if (!_running) Close(); }
+    private static TableLayoutPanel CreateLayout(params int[] fixedRows)
+    {
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = fixedRows.Length + 1 };
+        layout.ColumnStyles.Add(new(SizeType.Percent, 100));
+        foreach (int height in fixedRows) layout.RowStyles.Add(new(SizeType.Absolute, height));
+        layout.RowStyles.Add(new(SizeType.Percent, 100)); return layout;
+    }
+    private static Button WizardButton(string text, bool enabled = true) => new()
+    {
+        Text = text, AutoSize = true, MinimumSize = new(96, 0), Enabled = enabled
+    };
     private enum WizardPage { Welcome, Progress, Restart, Complete, Error }
 }
