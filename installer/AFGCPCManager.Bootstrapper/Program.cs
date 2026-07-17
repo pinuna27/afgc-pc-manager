@@ -4,6 +4,7 @@ using AFGCPCManager.Setup.Core.Dependencies;
 using AFGCPCManager.Setup.Core.Models;
 using AFGCPCManager.Setup.Core.Security;
 using AFGCPCManager.Setup.Core.Updates;
+using AFGCPCManager.VJoy;
 
 namespace AFGCPCManager.Bootstrapper;
 
@@ -83,6 +84,13 @@ internal static class Program
         registerResume();
         var coordinator = new DependencyCoordinator(new WindowsDependencyDetector(), new DependencyInstaller(), new JournalStore());
         DependencyExecutionResult result = await coordinator.EnsureAsync(Path.Combine(destination, "install-journal.json"), packages, allowUpdates: true);
+        if (!result.RestartRequired)
+        {
+            InstallationJournal journal = await new JournalStore().LoadAsync(Path.Combine(destination, "install-journal.json"))
+                ?? throw new InvalidOperationException("The installation journal is missing after dependency setup.");
+            if (journal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
+                await new VJoyDeviceProvisioner().EnsureOneCompatibleDeviceAsync();
+        }
         return result.RestartRequired;
     }
     private static async Task RemoveResumeUnlessRestartRequiredAsync(string destination)
