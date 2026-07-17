@@ -10,6 +10,10 @@ miss—and exposes a conventional, remapped controller through vJoy.
 > release or production installer. Do not treat builds from `main` as finished
 > end-user software.
 
+AFGC PC Manager executables are not currently Authenticode-signed. Windows may
+show an unknown-publisher or SmartScreen warning. Release-manifest signing
+protects update integrity but does not create Windows publisher reputation.
+
 ## Why this exists
 
 Capable hardware should remain useful. The controller already sends its trigger
@@ -82,6 +86,21 @@ executables, creates the application archive, signs the release manifest, and
 attaches all four assets to the GitHub Release. Maintainers must configure the
 `AFGC_RELEASE_SIGNING_KEY` Actions secret; the corresponding public key is
 embedded in setup and committed under `installer/ReleaseSigning/`.
+
+A locally built release can be tested without publishing it by passing its
+signed bundle directly to setup:
+
+```powershell
+AFGCPCManager-Setup-x64.exe `
+  --apply-archive AFGCPCManager-x64.zip `
+  --version 0.1.0 `
+  --manifest release-manifest.json `
+  --signature release-manifest.sig
+```
+
+Setup verifies the manifest signature, version, archive size, and SHA-256 hash
+before extracting the payload. Dependency installers are still downloaded only
+from the official release URLs pinned by that trusted manifest.
 
 ## License and trademarks
 

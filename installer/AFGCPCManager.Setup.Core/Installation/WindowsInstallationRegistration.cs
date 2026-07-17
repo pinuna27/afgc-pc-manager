@@ -14,6 +14,7 @@ public static class WindowsInstallationRegistration
         key.SetValue("DisplayIcon", Path.Combine(installDirectory, "AFGCPCManager.exe"));
         key.SetValue("UninstallString", $"\"{Path.Combine(installDirectory, "AFGCPCManager.Uninstaller.exe")}\"");
         key.SetValue("NoModify", 1, RegistryValueKind.DWord); key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
+        WindowsShortcutManager.Create(installDirectory);
     }
-    public static void Unregister() => Registry.LocalMachine.DeleteSubKeyTree(KeyPath, false);
+    public static void Unregister() { WindowsShortcutManager.Remove(); Registry.LocalMachine.DeleteSubKeyTree(KeyPath, false); }
 }

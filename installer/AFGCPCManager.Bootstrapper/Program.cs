@@ -18,7 +18,10 @@ internal static class Program
             if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("AFGC PC Manager supports Windows only.");
             string destination = Get(args, "--install-dir") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "AFGC PC Manager");
             if (Has(args, "--update") || Has(args, "--repair")) return await DownloadAndLaunchAsync(destination, Has(args, "--repair"));
-            if (Get(args, "--apply-archive") is string archive) return await ApplyArchiveAsync(archive, destination, Version.Parse(Get(args, "--version") ?? throw new ArgumentException("The signed release version is missing.")));
+            if (Get(args, "--apply-archive") is string archive) return await ApplyArchiveAsync(
+                archive, destination,
+                Version.Parse(Get(args, "--version") ?? throw new ArgumentException("The signed release version is missing.")),
+                Get(args, "--manifest"), Get(args, "--signature"));
             string payload = Get(args, "--payload") ?? Path.Combine(AppContext.BaseDirectory, "payload");
             if (!Directory.Exists(payload)) return await DownloadAndLaunchAsync(destination, repair: true);
             if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, args);
@@ -26,7 +29,7 @@ internal static class Program
             await InstallPayloadAsync(payload, destination, version);
             try
             {
-                bool restartRequired = await EnsureDependenciesAsync(destination, version,
+                bool restartRequired = await EnsureDependenciesAsync(destination, version, null,
                     () => WindowsSetupResumeRegistration.Register(Environment.ProcessPath!, ["--payload", payload, "--install-dir", destination]));
                 if (restartRequired) return 3010;
                 WindowsSetupResumeRegistration.Unregister(); return 0;
@@ -46,20 +49,30 @@ internal static class Program
         return Elevation.RelaunchAsAdministrator(setup, ["--apply-archive", archive, "--version", release.Version.ToString(), "--install-dir", destination]);
     }
 
-    private static async Task<int> ApplyArchiveAsync(string archive, string destination, Version version)
+    private static async Task<int> ApplyArchiveAsync(string archive, string destination, Version version, string? manifestPath, string? signaturePath)
     {
         if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, Environment.GetCommandLineArgs().Skip(1));
+        ReleaseManifest? localManifest = null;
+        if (manifestPath is not null || signaturePath is not null)
+        {
+            if (manifestPath is null || signaturePath is null) throw new ArgumentException("Both the local manifest and signature are required.");
+            localManifest = await new LocalReleaseBundleVerifier(new ReleaseManifestVerifier(TrustedReleaseKeys.LoadAfgcPublicKey()))
+                .VerifyAsync(manifestPath, signaturePath, archive, version);
+        }
         await StopRunningApplicationAsync(destination); string payload = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "payload", Guid.NewGuid().ToString("N"));
         try
         {
             new PayloadArchiveExtractor().Extract(archive, payload);
             await InstallPayloadAsync(payload, destination, version);
-            bool restartRequired = await EnsureDependenciesAsync(destination, version, () =>
-                WindowsSetupResumeRegistration.Register(Environment.ProcessPath!,
-                    ["--apply-archive", archive, "--version", version.ToString(), "--install-dir", destination]));
+            bool restartRequired = await EnsureDependenciesAsync(destination, version, localManifest, () =>
+            {
+                var resume = new List<string> { "--apply-archive", archive, "--version", version.ToString(), "--install-dir", destination };
+                if (manifestPath is not null) resume.AddRange(["--manifest", manifestPath, "--signature", signaturePath!]);
+                WindowsSetupResumeRegistration.Register(Environment.ProcessPath!, resume);
+            });
             if (restartRequired) { Console.WriteLine("A restart is required before setup can continue."); return 3010; }
             WindowsSetupResumeRegistration.Unregister();
-            StartApplication(destination); return 0;
+            StartApplicationUnelevated(destination); return 0;
         }
         catch
         {
@@ -68,17 +81,23 @@ internal static class Program
         }
         finally { if (Directory.Exists(payload)) Directory.Delete(payload, true); }
     }
-    private static async Task<bool> EnsureDependenciesAsync(string destination, Version version, Action registerResume)
+    private static async Task<bool> EnsureDependenciesAsync(string destination, Version version, ReleaseManifest? trustedManifest, Action registerResume)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         var client = new GitHubSignedReleaseClient(http, new ReleaseManifestVerifier(TrustedReleaseKeys.LoadAfgcPublicKey()));
-        VerifiedRelease release = await client.GetLatestAsync("pinuna27", "afgc-pc-manager");
-        if (release.Version != version) throw new InvalidDataException("The dependency manifest no longer matches this application release.");
+        ReleaseManifest manifest;
+        if (trustedManifest is null)
+        {
+            VerifiedRelease release = await client.GetLatestAsync("pinuna27", "afgc-pc-manager");
+            if (release.Version != version) throw new InvalidDataException("The dependency manifest no longer matches this application release.");
+            manifest = release.Manifest;
+        }
+        else manifest = trustedManifest;
         string staging = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "dependencies", version.ToString());
         var packages = new Dictionary<DependencyId, (Version Target, string InstallerPath)>();
-        if (release.Manifest.VJoy is DependencyRelease vjoy)
+        if (manifest.VJoy is DependencyRelease vjoy)
             packages[DependencyId.VJoy] = (Version.Parse(vjoy.Version), await client.DownloadDependencyAsync(vjoy, staging));
-        if (release.Manifest.HidHide is DependencyRelease hidHide)
+        if (manifest.HidHide is DependencyRelease hidHide)
             packages[DependencyId.HidHide] = (Version.Parse(hidHide.Version), await client.DownloadDependencyAsync(hidHide, staging));
         if (packages.Count == 0) return false;
         registerResume();
@@ -122,7 +141,13 @@ internal static class Program
         }
         throw new TimeoutException("AFGC PC Manager did not exit in time for the update.");
     }
-    private static void StartApplication(string destination) { string app = Path.Combine(destination, "AFGCPCManager.exe"); if (File.Exists(app)) Process.Start(new ProcessStartInfo(app) { UseShellExecute = true }); }
+    private static void StartApplicationUnelevated(string destination)
+    {
+        string app = Path.Combine(destination, "AFGCPCManager.exe");
+        if (!File.Exists(app)) return;
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe")) { UseShellExecute = false };
+        start.ArgumentList.Add(app); Process.Start(start);
+    }
     private static bool Has(string[] args, string key) => args.Contains(key, StringComparer.OrdinalIgnoreCase);
     private static string? Get(string[] args, string key) { int index = Array.FindIndex(args, x => x.Equals(key, StringComparison.OrdinalIgnoreCase)); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
 }
