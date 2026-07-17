@@ -46,6 +46,18 @@ public sealed class DependencyPlanBuilderTests
         Assert.False(plan.ManagedByAfgc);
     }
 
+    [Fact]
+    public void InterruptedInstallerIsTreatedAsManagedDuringRepair()
+    {
+        InstallationJournal journal = JournalWith() with
+        {
+            PendingDependencyOperation = new("VJoy", "2.2.2", "vjoy.exe", DependencyOperationPhase.InstallerStarted, false)
+        };
+        var plan = DependencyPlanBuilder.Build(new(DependencyId.VJoy, false), new(2, 2, 2), journal);
+        Assert.Equal(DependencyAction.Repair, plan.Action);
+        Assert.True(plan.ManagedByAfgc);
+    }
+
     private static InstallationJournal JournalWith(string[]? installed = null, string[]? preexisting = null) => new()
     {
         InstallDirectory = @"C:\Program Files\AFGC PC Manager",

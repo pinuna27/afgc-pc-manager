@@ -59,6 +59,8 @@ internal static class Program
             localManifest = await new LocalReleaseBundleVerifier(new ReleaseManifestVerifier(TrustedReleaseKeys.LoadAfgcPublicKey()))
                 .VerifyAsync(manifestPath, signaturePath, archive, version);
         }
+        DurableSetupBundle durable = DurableSetupStaging.Stage(version, Environment.ProcessPath!, archive, manifestPath, signaturePath);
+        archive = durable.ArchivePath; manifestPath = durable.ManifestPath; signaturePath = durable.SignaturePath;
         await StopRunningApplicationAsync(destination); string payload = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "payload", Guid.NewGuid().ToString("N"));
         try
         {
@@ -68,15 +70,17 @@ internal static class Program
             {
                 var resume = new List<string> { "--apply-archive", archive, "--version", version.ToString(), "--install-dir", destination };
                 if (manifestPath is not null) resume.AddRange(["--manifest", manifestPath, "--signature", signaturePath!]);
-                WindowsSetupResumeRegistration.Register(Environment.ProcessPath!, resume);
+                WindowsSetupResumeRegistration.Register(durable.SetupPath, resume);
             });
             if (restartRequired) { Console.WriteLine("A restart is required before setup can continue."); return 3010; }
             WindowsSetupResumeRegistration.Unregister();
+            DurableSetupStaging.Cleanup(durable);
             StartApplicationUnelevated(destination); return 0;
         }
         catch
         {
             await RemoveResumeUnlessRestartRequiredAsync(destination);
+            if (!await IsRestartRequiredAsync(destination)) DurableSetupStaging.Cleanup(durable);
             throw;
         }
         finally { if (Directory.Exists(payload)) Directory.Delete(payload, true); }
@@ -118,6 +122,9 @@ internal static class Program
         if (journal?.PendingDependencyOperation?.Phase != DependencyOperationPhase.RestartRequired)
             WindowsSetupResumeRegistration.Unregister();
     }
+    private static async Task<bool> IsRestartRequiredAsync(string destination) =>
+        (await new JournalStore().LoadAsync(Path.Combine(destination, "install-journal.json")))?.PendingDependencyOperation?.Phase
+            == DependencyOperationPhase.RestartRequired;
     private static async Task InstallPayloadAsync(string payload, string destination, Version version)
     {
         Console.WriteLine("Installing AFGC PC Manager..."); await new ApplicationInstaller(new JournalStore()).InstallAsync(payload, destination, version); WindowsInstallationRegistration.Register(destination, version); Console.WriteLine($"Installed successfully to {destination}");

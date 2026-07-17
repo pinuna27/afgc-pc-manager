@@ -11,12 +11,17 @@ $ErrorActionPreference = 'Stop'
 if (-not $Path) {
     $latest = Get-ChildItem -Path (Join-Path $PSScriptRoot '..\captures') -Filter '*.csv' -File |
         Sort-Object LastWriteTime -Descending |
+        Where-Object { (Get-Content -LiteralPath $_.FullName -TotalCount 1) -eq 'utc_time,elapsed_ms,kind,step,label,device,report_hex' } |
         Select-Object -First 1
     if (-not $latest) { throw 'No capture CSV was found in captures/.' }
     $Path = $latest.FullName
 }
 
 $Path = (Resolve-Path -LiteralPath $Path).Path
+$header = Get-Content -LiteralPath $Path -TotalCount 1
+if ($header -ne 'utc_time,elapsed_ms,kind,step,label,device,report_hex') {
+    throw 'The selected CSV is not a FireController.Capture guided-capture file.'
+}
 if (-not $OutputDirectory) { $OutputDirectory = Split-Path -Parent $Path }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 

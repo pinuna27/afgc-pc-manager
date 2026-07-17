@@ -76,6 +76,26 @@ public sealed class DependencyCoordinatorTests : IDisposable
         Assert.Null(saved.PendingDependencyOperation);
     }
 
+    [Fact]
+    public async Task ResumeReconcilesOwnershipWhenRebootInterruptedInstallerReturn()
+    {
+        string journalPath = Path.Combine(_root, "install-journal.json");
+        var journal = new InstallationJournal
+        {
+            InstallDirectory = _root, Version = "1.0",
+            PendingDependencyOperation = new("HidHide", "1.5.230", "hidhide.exe", DependencyOperationPhase.InstallerStarted, false)
+        };
+        await new JournalStore().SaveAsync(journalPath, journal, TestContext.Current.CancellationToken);
+        var coordinator = new DependencyCoordinator(new FakeDetector(new(DependencyId.HidHide, true, new(1, 5, 230))), new FakeInstaller(), new JournalStore());
+        await coordinator.EnsureAsync(journalPath,
+            new Dictionary<DependencyId, (Version, string)> { [DependencyId.HidHide] = (new(1, 5, 230), "hidhide.exe") }, true,
+            TestContext.Current.CancellationToken);
+        InstallationJournal saved = (await new JournalStore().LoadAsync(journalPath, TestContext.Current.CancellationToken))!;
+        Assert.Contains("HidHide", saved.DependenciesInstalledBySetup);
+        Assert.DoesNotContain("HidHide", saved.DependenciesPresentBeforeSetup);
+        Assert.Null(saved.PendingDependencyOperation);
+    }
+
     private async Task<string> CreateJournalAsync()
     {
         string path = Path.Combine(_root, "install-journal.json");

@@ -11,7 +11,10 @@ public static class DependencyPlanBuilder
     public static DependencyPlan Build(DependencyState state, Version target, InstallationJournal? journal)
     {
         string name = state.Id.ToString();
-        bool managed = journal?.DependenciesInstalledBySetup.Contains(name) == true;
+        bool interruptedManagedInstall = journal?.PendingDependencyOperation is
+            { Phase: DependencyOperationPhase.InstallerStarted or DependencyOperationPhase.RestartRequired } pending
+            && pending.Dependency.Equals(name, StringComparison.OrdinalIgnoreCase);
+        bool managed = journal?.DependenciesInstalledBySetup.Contains(name) == true || interruptedManagedInstall;
         bool knownPreexisting = journal?.DependenciesPresentBeforeSetup.Contains(name) == true;
 
         if (!state.IsInstalled)

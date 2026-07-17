@@ -25,9 +25,12 @@ public sealed class DependencyCoordinator(
         {
             DependencyState before = detector.Detect(id);
             if (before.IsInstalled
-                && journal.PendingDependencyOperation is { Phase: DependencyOperationPhase.RestartRequired } pending
+                && journal.PendingDependencyOperation is
+                    { Phase: DependencyOperationPhase.InstallerStarted or DependencyOperationPhase.RestartRequired } pending
                 && pending.Dependency.Equals(id.ToString(), StringComparison.OrdinalIgnoreCase))
             {
+                journal.DependenciesInstalledBySetup.Add(id.ToString());
+                journal.DependenciesPresentBeforeSetup.Remove(id.ToString());
                 journal = journal with { PendingDependencyOperation = null };
                 await journalStore.SaveAsync(journalPath, journal, cancellationToken);
             }
