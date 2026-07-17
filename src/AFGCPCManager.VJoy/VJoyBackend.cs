@@ -42,7 +42,7 @@ public sealed class VJoyBackend : IGamepadOutputBackend
     private OutputDeviceInfo Describe(uint id)
     {
         var native = _api.GetStatus(id);
-        TryReadCapabilities(id, out var capabilities);
+        bool compatible = TryReadCapabilities(id, out var capabilities);
         return new(id, native switch { VJoyDeviceStatus.Owned => OutputDeviceStatus.Owned, VJoyDeviceStatus.Free => OutputDeviceStatus.Free, VJoyDeviceStatus.Busy => OutputDeviceStatus.Busy, VJoyDeviceStatus.Missing => OutputDeviceStatus.Missing, _ => OutputDeviceStatus.Unknown }, capabilities);
     }
 
@@ -55,8 +55,8 @@ public sealed class VJoyBackend : IGamepadOutputBackend
             axes[pair.Key] = new(min, max);
         }
         int buttons = _api.GetButtonCount(id), povs = _api.GetContinuousPovCount(id);
-        capabilities = new(axes, buttons, povs);
-        return buttons >= 11 && povs >= 1;
+        if (buttons < 11 || povs < 1) { capabilities = null; return false; }
+        capabilities = new(axes, buttons, povs); return true;
     }
 
     private static readonly IReadOnlyDictionary<VirtualAxis, VJoyAxisUsage> AxisMap = new Dictionary<VirtualAxis, VJoyAxisUsage>

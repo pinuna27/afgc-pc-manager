@@ -4,6 +4,7 @@ using AFGCPCManager.Core.Devices;
 using AFGCPCManager.Core.Registration;
 using AFGCPCManager.Core.Settings;
 using AFGCPCManager.Core.Updates;
+using AFGCPCManager.Core.Output;
 using System.Diagnostics;
 using AFGCPCManager.VJoy;
 using AFGCPCManager.HidHide;
@@ -31,6 +32,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     private readonly Queue<string> _recentEvents = new();
     private string _lastStatus = "Starting";
     private int _compatibleVJoyDevices;
+    private int _lastProvisioningTarget;
+    private int _failedProvisioningTarget = -1;
     private HidHideAvailability _hidingAvailability = HidHideAvailability.NotInstalled;
 
     public event EventHandler<string>? StatusChanged;
@@ -76,17 +79,36 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             var present = _lastDiscovery.Select(x => x.Identity.StableId).ToHashSet(StringComparer.Ordinal);
             foreach (string removed in _controllers.Keys.Where(id => !present.Contains(id)).ToArray()) { await _controllers[removed].DisposeAsync(); _controllers.Remove(removed); await UnhideIfOwnedAsync(removed, cancellationToken); }
             bool setupRequired = false;
+            int requiredOutputs = _lastDiscovery.Count(device => settings.Controllers.Any(x => x.StableId == device.Identity.StableId));
+            if (requiredOutputs != _lastProvisioningTarget) { _lastProvisioningTarget = requiredOutputs; _failedProvisioningTarget = -1; }
+            IReadOnlyList<OutputDeviceInfo> outputs = _backend!.EnumerateDevices();
+            _compatibleVJoyDevices = outputs.Count(x => x.Capabilities is not null && x.Status is OutputDeviceStatus.Free or OutputDeviceStatus.Owned);
+            if (requiredOutputs > _compatibleVJoyDevices && requiredOutputs != _failedProvisioningTarget)
+            {
+                try
+                {
+                    await new VJoyDeviceProvisioner().EnsureCompatibleDeviceCountAsync(requiredOutputs, cancellationToken);
+                    _compatibleVJoyDevices = _backend.EnumerateDevices().Count(x => x.Capabilities is not null);
+                    RecordEvent($"Expanded vJoy capacity to {_compatibleVJoyDevices} compatible device(s).");
+                }
+                catch (Exception ex)
+                {
+                    _failedProvisioningTarget = requiredOutputs; setupRequired = true;
+                    RecordEvent($"Could not provision {requiredOutputs} vJoy outputs: {ex.Message}");
+                }
+            }
             foreach (var device in _lastDiscovery)
             {
                 if (_controllers.ContainsKey(device.Identity.StableId)) continue;
                 RegisteredController? registration = settings.Controllers.FirstOrDefault(x => x.StableId == device.Identity.StableId); if (registration is null) continue;
-                var output = _backend!.TryAcquire(registration.PreferredVJoyId); if (output is null) continue;
+                var output = _backend.TryAcquire(registration.PreferredVJoyId); if (output is null) continue;
                 var bridge = new ControllerBridge(new RawInputControllerInput(device.Endpoints.Select(x => x.DevicePath)), output, new WindowsConsumerActionEmitter(), _registry.GetEffectiveMapping(device.Identity.StableId));
                 if (settings.Application.HidePhysicalControllers)
                 {
                     try { await _hidHide.HideAsync(device.Identity.StableId, device.Endpoints.Select(x => x.DevicePath), Environment.ProcessPath!, cancellationToken); _hiddenControllers.Add(device.Identity.StableId); }
                     catch { setupRequired = true; try { await _hidHide.UnhideAsync(device.Identity.StableId, CancellationToken.None); } catch { } }
                 }
+                if (registration.PreferredVJoyId != output.DeviceId) { _registry.SetPreferredVJoyId(device.Identity.StableId, output.DeviceId); await _settingsStore.SaveAsync(_registry.Snapshot, cancellationToken); }
                 var runtime = new RuntimeEntry(bridge, output.DeviceId, device.Identity.ToRedactedString(), OnRuntimeStopped); _controllers.Add(device.Identity.StableId, runtime); runtime.Start();
             }
             SetStatus(setupRequired ? "Setup required." : _lastDiscovery.Count == 0 ? "Waiting for an Amazon Fire Game Controller..." : $"Running — {_controllers.Count} of {_lastDiscovery.Count} Fire controller(s) mapped.");

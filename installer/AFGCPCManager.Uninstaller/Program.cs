@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using AFGCPCManager.Setup.Core.Dependencies;
 using AFGCPCManager.Setup.Core.Installation;
 using AFGCPCManager.Setup.Core.Models;
@@ -7,12 +8,13 @@ namespace AFGCPCManager.Uninstaller;
 
 internal static class Program
 {
+    private const string DetachedArgument = "--detached";
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
         try
         {
-            string? detachedRoot = Get(args, "--detached");
+            string? detachedRoot = Get(args, DetachedArgument);
             if (detachedRoot is null)
             {
                 string root = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
@@ -31,12 +33,14 @@ internal static class Program
                         File.Copy(source, Path.Combine(temporaryDirectory, name));
                 }
                 string temporary = Path.Combine(temporaryDirectory, Path.GetFileName(Environment.ProcessPath!));
-                var elevatedArguments = new List<string> { "--detached", root };
+                var elevatedArguments = new List<string> { DetachedArgument, root };
                 if (form.Options.UninstallVJoy) elevatedArguments.Add("--remove-vjoy");
                 if (form.Options.UninstallHidHide) elevatedArguments.Add("--remove-hidhide");
                 return Elevation.RelaunchAsAdministrator(temporary, elevatedArguments);
             }
             if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(Environment.ProcessPath!, args);
+            string continuationExecutable = EnsureDurableContinuationCopy();
+            var continuationArguments = args.ToList();
             string application = Path.Combine(detachedRoot, "AFGCPCManager.exe");
             if (File.Exists(application))
             {
@@ -46,8 +50,20 @@ internal static class Program
             }
             var dependencyUninstaller = new RegisteredDependencyUninstaller();
             bool restartRequired = false;
-            if (Has(args, "--remove-vjoy")) restartRequired |= await RemoveDependencyAsync(dependencyUninstaller, DependencyId.VJoy);
-            if (Has(args, "--remove-hidhide")) restartRequired |= await RemoveDependencyAsync(dependencyUninstaller, DependencyId.HidHide);
+            if (Has(args, "--remove-vjoy"))
+            {
+                WindowsUninstallResumeRegistration.Register(continuationExecutable, continuationArguments);
+                DependencyRemovalResult removal = await RemoveDependencyAsync(dependencyUninstaller, DependencyId.VJoy);
+                restartRequired |= removal.RestartRequired;
+                if (removal.RestartInitiated) return 3010;
+            }
+            if (Has(args, "--remove-hidhide"))
+            {
+                WindowsUninstallResumeRegistration.Register(continuationExecutable, continuationArguments);
+                DependencyRemovalResult removal = await RemoveDependencyAsync(dependencyUninstaller, DependencyId.HidHide);
+                restartRequired |= removal.RestartRequired;
+                if (removal.RestartInitiated) return 3010;
+            }
             string journalPath = Path.Combine(detachedRoot, "install-journal.json");
             UninstallResult result = await new ApplicationUninstaller(new JournalStore()).UninstallOwnedFilesAsync(journalPath);
             WindowsInstallationRegistration.Unregister();
@@ -55,19 +71,56 @@ internal static class Program
             foreach (string directory in Directory.EnumerateDirectories(detachedRoot, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
                 if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
             if (!Directory.EnumerateFileSystemEntries(detachedRoot).Any()) Directory.Delete(detachedRoot);
+            WindowsUninstallResumeRegistration.Unregister();
+            CleanupDurableContinuation();
             Console.WriteLine($"Removed {result.RemovedFiles} files.");
             if (result.PreservedModifiedFiles.Count > 0) Console.WriteLine($"Preserved {result.PreservedModifiedFiles.Count} modified files.");
             return restartRequired ? 3010 : 0;
         }
-        catch (Exception ex) { MessageBox.Show($"Uninstall failed: {ex.Message}", "AFGC PC Manager", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+        catch (Exception ex) { try { WindowsUninstallResumeRegistration.Unregister(); } catch { } MessageBox.Show($"Uninstall failed: {ex.Message}", "AFGC PC Manager", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
     }
-    private static async Task<bool> RemoveDependencyAsync(RegisteredDependencyUninstaller uninstaller, DependencyId dependency)
+    private static async Task<DependencyRemovalResult> RemoveDependencyAsync(RegisteredDependencyUninstaller uninstaller, DependencyId dependency)
     {
+        if (uninstaller.Find(dependency) is null) return new(false, false);
         int exitCode = await uninstaller.UninstallInteractiveAsync(dependency);
         if (exitCode is not (0 or 1641 or 3010))
             throw new InvalidOperationException($"The {dependency} uninstaller exited with code {exitCode}.");
-        return exitCode is 1641 or 3010;
+        return new(exitCode is 1641 or 3010, exitCode == 1641);
+    }
+    private static string EnsureDurableContinuationCopy()
+    {
+        string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AFGC PC Manager", "Uninstall");
+        Directory.CreateDirectory(directory);
+        foreach (string source in Directory.EnumerateFiles(AppContext.BaseDirectory))
+        {
+            string name = Path.GetFileName(source);
+            if (name.StartsWith("AFGCPCManager.Uninstaller", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("AFGCPCManager.Setup.Core", StringComparison.OrdinalIgnoreCase))
+            {
+                string destination = Path.Combine(directory, name);
+                if (!Path.GetFullPath(source).Equals(Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
+                    File.Copy(source, destination, overwrite: true);
+            }
+        }
+        return Path.Combine(directory, Path.GetFileName(Environment.ProcessPath!));
+    }
+    private static void CleanupDurableContinuation()
+    {
+        string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AFGC PC Manager", "Uninstall");
+        if (!Directory.Exists(directory)) return;
+        foreach (string file in Directory.EnumerateFiles(directory))
+        {
+            try { File.Delete(file); }
+            catch (IOException) { _ = MoveFileEx(file, null, 4); }
+            catch (UnauthorizedAccessException) { _ = MoveFileEx(file, null, 4); }
+        }
+        try { Directory.Delete(directory); }
+        catch (IOException) { _ = MoveFileEx(directory, null, 4); }
+        catch (UnauthorizedAccessException) { _ = MoveFileEx(directory, null, 4); }
     }
     private static bool Has(string[] args, string key) => args.Contains(key, StringComparer.OrdinalIgnoreCase);
     private static string? Get(string[] args, string key) { int index = Array.IndexOf(args, key); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
+    private sealed record DependencyRemovalResult(bool RestartRequired, bool RestartInitiated);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool MoveFileEx(string existingFileName, string? newFileName, int flags);
 }

@@ -48,9 +48,11 @@ internal sealed class SettingsForm : Form
         var page = new TabPage("Diagnostics"); var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 50, Padding = new(6), FlowDirection = FlowDirection.RightToLeft };
         var refresh = new Button { Text = "Refresh", AutoSize = true }; refresh.Click += (_, _) => RefreshDiagnostics();
         var copy = new Button { Text = "Copy report", AutoSize = true }; copy.Click += (_, _) => { if (_diagnosticReport.TextLength > 0) Clipboard.SetText(_diagnosticReport.Text); };
+        var controllers = new Button { Text = "Open game controllers", AutoSize = true };
+        controllers.Click += (_, _) => { try { Process.Start(new ProcessStartInfo("control.exe", "joy.cpl") { UseShellExecute = true }); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "Game controllers", MessageBoxButtons.OK, MessageBoxIcon.Error); } };
         string setupPath = Path.Combine(AppContext.BaseDirectory, "AFGCPCManager.Setup.exe"); var repair = new Button { Text = "Repair setup", AutoSize = true, Enabled = File.Exists(setupPath) };
         repair.Click += (_, _) => { try { Process.Start(new ProcessStartInfo(setupPath, "--repair") { UseShellExecute = true }); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "Repair setup", MessageBoxButtons.OK, MessageBoxIcon.Error); } };
-        buttons.Controls.Add(refresh); buttons.Controls.Add(copy); buttons.Controls.Add(repair); page.Controls.Add(_diagnosticReport); page.Controls.Add(buttons); return page;
+        buttons.Controls.Add(refresh); buttons.Controls.Add(copy); buttons.Controls.Add(controllers); buttons.Controls.Add(repair); page.Controls.Add(_diagnosticReport); page.Controls.Add(buttons); return page;
     }
     private void RefreshDiagnostics() => _diagnosticReport.Text = _diagnostics().ToReport();
     private static void AddRow(TableLayoutPanel grid, int row, Control label, Control value) { grid.Controls.Add(label, 0, row); grid.Controls.Add(value, 1, row); value.Dock = DockStyle.Top; }

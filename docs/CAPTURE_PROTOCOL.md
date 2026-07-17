@@ -1,8 +1,9 @@
-# Amazon Fire Game Controller guided capture
+# Amazon Fire TV Game Controller (2014, 1st gen) guided capture
 
 This document describes the current `FireController.Capture` and
-`analyze-capture.ps1` tools. They target the first-generation 2014 Amazon Fire
-Game Controller (`VID 1949`, `PID 0402`) and record its Raw Input HID reports.
+`analyze-capture.ps1` tools. They target the Amazon Fire TV Game Controller
+(2014, 1st gen), which appears in Windows Bluetooth as **Amazon Fire Game
+Controller** (`VID 1949`, `PID 0402`), and record its Raw Input HID reports.
 
 The capture tool listens to gamepad, joystick, consumer-control, keyboard, and
 system-control top-level collections, but writes reports only for the target
@@ -11,7 +12,8 @@ Amazon vendor and product IDs. The CSV can contain local device paths, so the
 
 ## Start a capture
 
-1. Pair the controller in **Windows Settings > Bluetooth & devices**.
+1. Pair **Amazon Fire Game Controller** in **Windows Settings > Bluetooth &
+   devices**.
 2. Close games, Steam Input, x360ce, controller testers, and other programs
    that may react to controller or media buttons.
 3. Put the controller on a flat surface with all controls released.

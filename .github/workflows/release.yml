@@ -81,6 +81,14 @@ jobs:
           dotnet run --project tools/ReleaseManifest.Signer/ReleaseManifest.Signer.csproj --configuration Release --no-build -- .release-secrets/manifest-private.pem installer/ReleaseSigning/afgc-release-public.pem artifacts/release/release-manifest.json artifacts/release/release-manifest.sig
           Remove-Item -LiteralPath .release-secrets/manifest-private.pem -Force
 
+      - name: Create release checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem artifacts/release -File | Sort-Object Name | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)"
+          } | Set-Content artifacts/release/SHA256SUMS.txt -Encoding ascii
+
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
@@ -100,3 +108,4 @@ jobs:
             artifacts/release/AFGCPCManager-x64.zip
             artifacts/release/release-manifest.json
             artifacts/release/release-manifest.sig
+            artifacts/release/SHA256SUMS.txt

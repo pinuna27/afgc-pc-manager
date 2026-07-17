@@ -40,6 +40,24 @@ public sealed class VJoyDeviceProvisionerTests
             [Device(1, OutputDeviceStatus.Busy), Device(2, OutputDeviceStatus.Busy)]));
     }
 
+    [Fact]
+    public void ExpandsToRequestedCountWithoutTouchingBusyDevices()
+    {
+        IReadOnlyList<VJoyProvisioningPlan> plans = VJoyDeviceProvisioner.SelectPlans(
+            [Device(1, OutputDeviceStatus.Free, compatible: true), Device(2, OutputDeviceStatus.Busy),
+             Device(3, OutputDeviceStatus.Missing), Device(4, OutputDeviceStatus.Free)], 3);
+
+        Assert.Equal([new(1, VJoyProvisioningAction.None), new(3, VJoyProvisioningAction.Create),
+            new(4, VJoyProvisioningAction.Reconfigure)], plans);
+    }
+
+    [Fact]
+    public void RejectsRequestBeyondAvailableNonBusyDevices()
+    {
+        Assert.Throws<InvalidOperationException>(() => VJoyDeviceProvisioner.SelectPlans(
+            [Device(1, OutputDeviceStatus.Free, compatible: true), Device(2, OutputDeviceStatus.Busy)], 2));
+    }
+
     private static OutputDeviceInfo Device(uint id, OutputDeviceStatus status, bool compatible = false) =>
         new(id, status, compatible ? new(new Dictionary<VirtualAxis, AxisRange>(), 11, 1) : null);
 }

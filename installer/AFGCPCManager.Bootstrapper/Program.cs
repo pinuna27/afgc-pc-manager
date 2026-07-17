@@ -98,23 +98,37 @@ internal static class Program
         }
         else manifest = trustedManifest;
         string staging = Path.Combine(Path.GetTempPath(), "AFGC PC Manager", "dependencies", version.ToString());
+        string journalPath = Path.Combine(destination, "install-journal.json");
+        var journalStore = new JournalStore();
+        InstallationJournal journal = await journalStore.LoadAsync(journalPath)
+            ?? throw new InvalidOperationException("The installation journal is missing before dependency setup.");
+        var detector = new WindowsDependencyDetector();
         var packages = new Dictionary<DependencyId, (Version Target, string InstallerPath)>();
-        if (manifest.VJoy is DependencyRelease vjoy)
-            packages[DependencyId.VJoy] = (Version.Parse(vjoy.Version), await client.DownloadDependencyAsync(vjoy, staging));
-        if (manifest.HidHide is DependencyRelease hidHide)
-            packages[DependencyId.HidHide] = (Version.Parse(hidHide.Version), await client.DownloadDependencyAsync(hidHide, staging));
+        bool hasInstallerActions = false;
+        if (manifest.VJoy is DependencyRelease vjoy) await AddPackageAsync(DependencyId.VJoy, vjoy);
+        if (manifest.HidHide is DependencyRelease hidHide) await AddPackageAsync(DependencyId.HidHide, hidHide);
         if (packages.Count == 0) return false;
-        registerResume();
-        var coordinator = new DependencyCoordinator(new WindowsDependencyDetector(), new DependencyInstaller(), new JournalStore());
-        DependencyExecutionResult result = await coordinator.EnsureAsync(Path.Combine(destination, "install-journal.json"), packages, allowUpdates: true);
+        if (hasInstallerActions) registerResume();
+        var coordinator = new DependencyCoordinator(detector, new DependencyInstaller(), journalStore);
+        DependencyExecutionResult result = await coordinator.EnsureAsync(journalPath, packages, allowUpdates: true);
         if (!result.RestartRequired)
         {
-            InstallationJournal journal = await new JournalStore().LoadAsync(Path.Combine(destination, "install-journal.json"))
+            InstallationJournal updatedJournal = await new JournalStore().LoadAsync(Path.Combine(destination, "install-journal.json"))
                 ?? throw new InvalidOperationException("The installation journal is missing after dependency setup.");
-            if (journal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
+            if (updatedJournal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
                 await new VJoyDeviceProvisioner().EnsureOneCompatibleDeviceAsync();
         }
         return result.RestartRequired;
+
+        async Task AddPackageAsync(DependencyId id, DependencyRelease dependency)
+        {
+            Version target = Version.Parse(dependency.Version);
+            DependencyPlan plan = DependencyPlanBuilder.Build(detector.Detect(id), target, journal);
+            bool needsInstaller = plan.Action is DependencyAction.Install or DependencyAction.Repair or DependencyAction.Update;
+            string installerPath = needsInstaller ? await client.DownloadDependencyAsync(dependency, staging) : string.Empty;
+            hasInstallerActions |= needsInstaller;
+            packages[id] = (target, installerPath);
+        }
     }
     private static async Task RemoveResumeUnlessRestartRequiredAsync(string destination)
     {

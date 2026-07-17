@@ -1,9 +1,11 @@
 # AFGC PC Manager
 
-AFGC PC Manager is an unofficial Windows compatibility manager for the 2014
-Amazon Fire Game Controller. It reads the controller's complete Bluetooth HID
-reports—including the analog triggers that some Windows game-controller paths
-miss—and exposes a conventional, remapped controller through vJoy.
+AFGC PC Manager is an unofficial Windows compatibility manager for the Amazon
+Fire TV Game Controller (2014, 1st gen). The controller appears in Windows
+Bluetooth as **Amazon Fire Game Controller**. AFGC PC Manager reads its complete
+Bluetooth HID reports—including the analog triggers that some Windows
+game-controller paths miss—and exposes a conventional, remapped controller
+through vJoy.
 
 > [!WARNING]
 > This project is under active development. There is not yet a supported public
@@ -13,6 +15,8 @@ miss—and exposes a conventional, remapped controller through vJoy.
 AFGC PC Manager executables are not currently Authenticode-signed. Windows may
 show an unknown-publisher or SmartScreen warning. Release-manifest signing
 protects update integrity but does not create Windows publisher reputation.
+Only download releases from this repository, and compare the setup file against
+the release's `SHA256SUMS.txt` before approving the Windows warning.
 
 ## Why this exists
 
@@ -65,6 +69,10 @@ The solution can be opened directly in JetBrains Rider or Visual Studio.
 The projects are separated so controller decoding and mapping remain testable
 without Bluetooth hardware or installed drivers.
 
+Hardware release candidates must also pass [the release-validation
+checklist](docs/RELEASE_VALIDATION.md), including trigger, HidHide, reboot,
+repair, uninstall, and multiple-controller tests on Windows.
+
 ## Controller research tools
 
 The capture and probe tools are intentionally retained so results can be
@@ -83,7 +91,7 @@ security-sensitive installer, update, or device-hiding issues according to
 Release builds are created only from version tags by GitHub Actions. The
 workflow builds and tests the solution, publishes self-contained Windows x64
 executables, creates the application archive, signs the release manifest, and
-attaches all four assets to the GitHub Release. Maintainers must configure the
+publishes SHA-256 checksums with the GitHub Release. Maintainers must configure the
 `AFGC_RELEASE_SIGNING_KEY` Actions secret; the corresponding public key is
 embedded in setup and committed under `installer/ReleaseSigning/`.
 

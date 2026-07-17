@@ -32,6 +32,7 @@ public sealed class VJoyBackendTests
         var api = new FakeVJoyNativeApi { Buttons = buttons, Povs = povs }; api.Statuses[1] = VJoyDeviceStatus.Free;
         using var backend = new VJoyBackend(api);
         Assert.Null(backend.TryAcquire());
+        Assert.Null(backend.EnumerateDevices()[0].Capabilities);
     }
 
     [Fact]
