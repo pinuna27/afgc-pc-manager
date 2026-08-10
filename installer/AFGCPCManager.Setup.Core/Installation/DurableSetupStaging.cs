@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 namespace AFGCPCManager.Setup.Core.Installation;
 
 public sealed record DurableSetupBundle(string Directory, string SetupPath, string ArchivePath, string? ManifestPath, string? SignaturePath);
+public sealed record DurableLocalSetupBundle(string Directory, string SetupPath, string PayloadDirectory, string? ManifestPath, string? SignaturePath);
 
 public static class DurableSetupStaging
 {
@@ -21,16 +22,39 @@ public static class DurableSetupStaging
         return new(directory, setup, archive, manifest, signature);
     }
 
-    public static void Cleanup(DurableSetupBundle bundle)
+    public static DurableLocalSetupBundle StageLocal(
+        Version version, string setupPath, string? manifestPath, string? signaturePath) =>
+        StageLocal(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            "AFGC PC Manager", "Setup"), version, setupPath, manifestPath, signaturePath);
+
+    public static DurableLocalSetupBundle StageLocal(
+        string root, Version version, string setupPath, string? manifestPath, string? signaturePath)
     {
-        try { if (Directory.Exists(bundle.Directory)) Directory.Delete(bundle.Directory, true); }
+        if ((manifestPath is null) != (signaturePath is null))
+            throw new ArgumentException("Both the local manifest and signature are required for durable resume.");
+        string directory = Path.Combine(Path.GetFullPath(root), version.ToString());
+        Directory.CreateDirectory(directory);
+        string setup = CopyAtomically(setupPath, Path.Combine(directory, "AFGCPCManager.Setup.exe"));
+        string payload = Path.Combine(directory, "resume-payload");
+        Directory.CreateDirectory(payload);
+        string? manifest = manifestPath is null ? null : CopyAtomically(manifestPath, Path.Combine(directory, "release-manifest.json"));
+        string? signature = signaturePath is null ? null : CopyAtomically(signaturePath, Path.Combine(directory, "release-manifest.sig"));
+        return new(directory, setup, payload, manifest, signature);
+    }
+
+    public static void Cleanup(DurableSetupBundle bundle) => Cleanup(bundle.Directory);
+    public static void Cleanup(DurableLocalSetupBundle bundle) => Cleanup(bundle.Directory);
+
+    public static void Cleanup(string directory)
+    {
+        try { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            foreach (string file in Directory.EnumerateFiles(bundle.Directory, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
+            foreach (string file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
                 MoveFileEx(file, null, MoveFileDelayUntilReboot);
-            foreach (string directory in Directory.EnumerateDirectories(bundle.Directory, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
-                MoveFileEx(directory, null, MoveFileDelayUntilReboot);
-            MoveFileEx(bundle.Directory, null, MoveFileDelayUntilReboot);
+            foreach (string childDirectory in Directory.EnumerateDirectories(directory, "*", SearchOption.AllDirectories).OrderByDescending(x => x.Length))
+                MoveFileEx(childDirectory, null, MoveFileDelayUntilReboot);
+            MoveFileEx(directory, null, MoveFileDelayUntilReboot);
         }
     }
 

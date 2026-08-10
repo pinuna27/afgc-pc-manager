@@ -27,10 +27,32 @@ public sealed class VJoyDeviceProvisioner
 
     public async Task<IReadOnlyList<VJoyProvisioningPlan>> EnsureCompatibleDeviceCountAsync(int requiredCount, CancellationToken cancellationToken = default)
     {
+        using var backend = new VJoyBackend();
+        return await EnsureCompatibleDeviceCountAsync(backend, requiredCount,
+            cancellationToken);
+    }
+
+    public Task<IReadOnlyList<VJoyProvisioningPlan>>
+        EnsureCompatibleDeviceCountForProcessLifetimeAsync(
+            int requiredCount, CancellationToken cancellationToken = default)
+    {
+        // Setup uses this only in a disposable helper process. The affected
+        // vJoyInterface build can deadlock while unloading on a thread without
+        // a Windows message loop, so that helper intentionally keeps the DLL
+        // loaded until Windows terminates the completed helper process.
+        var backend = new VJoyBackend();
+        return EnsureCompatibleDeviceCountAsync(backend, requiredCount,
+            cancellationToken);
+    }
+
+    private static async Task<IReadOnlyList<VJoyProvisioningPlan>>
+        EnsureCompatibleDeviceCountAsync(VJoyBackend backend, int requiredCount,
+            CancellationToken cancellationToken)
+    {
         if (requiredCount is < 1 or > (int)VJoyBackend.MaximumDeviceId)
             throw new ArgumentOutOfRangeException(nameof(requiredCount));
-        IReadOnlyList<VJoyProvisioningPlan> plans;
-        using (var backend = new VJoyBackend()) plans = SelectPlans(backend.EnumerateDevices(), requiredCount);
+        IReadOnlyList<VJoyProvisioningPlan> plans =
+            SelectPlans(backend.EnumerateDevices(), requiredCount);
 
         foreach (VJoyProvisioningPlan plan in plans.Where(x => x.Action != VJoyProvisioningAction.None))
         {
@@ -43,8 +65,11 @@ public sealed class VJoyDeviceProvisioner
             if (process.ExitCode != 0) throw new InvalidOperationException($"vJoyConfig.exe exited with code {process.ExitCode}.");
         }
 
-        using var verification = new VJoyBackend();
-        int compatible = verification.EnumerateDevices().Count(IsUsable);
+        // vJoyInterface.dll creates process-global dummy-window state. Keep one
+        // backend alive for planning and verification; unloading and reloading
+        // it in the same process can display a modal "Creation of dummy window
+        // failed" error and leave setup holding its lifecycle mutex forever.
+        int compatible = backend.EnumerateDevices().Count(IsUsable);
         if (compatible < requiredCount)
             throw new InvalidOperationException($"vJoy exposed only {compatible} of {requiredCount} required compatible devices after configuration.");
         return plans;

@@ -121,4 +121,29 @@ public sealed class ControllerStateMapperTests
         Assert.Empty(held.ConsumerActions);
         Assert.False(first.Gamepad.IsButtonPressed(11));
     }
+
+    [Fact]
+    public void GuideHomeNeverEmitsBrowserActionAcrossPressHoldAndRepress()
+    {
+        var mapper = new ControllerStateMapper();
+        ControllerMappingProfile profile = new() { HomeButton = HomeButtonMode.Guide };
+        PhysicalControllerState pressed = PhysicalControllerState.Neutral with
+        {
+            ConsumerButtons = ConsumerButtons.Home
+        };
+
+        MappingResult first = mapper.Map(pressed, profile);
+        MappingResult held = mapper.Map(pressed, profile);
+        MappingResult released = mapper.Map(PhysicalControllerState.Neutral, profile);
+        MappingResult repressed = mapper.Map(pressed, profile);
+
+        Assert.True(first.Gamepad.IsButtonPressed(11));
+        Assert.True(held.Gamepad.IsButtonPressed(11));
+        Assert.False(released.Gamepad.IsButtonPressed(11));
+        Assert.True(repressed.Gamepad.IsButtonPressed(11));
+        Assert.Empty(first.ConsumerActions);
+        Assert.Empty(held.ConsumerActions);
+        Assert.Empty(released.ConsumerActions);
+        Assert.Empty(repressed.ConsumerActions);
+    }
 }

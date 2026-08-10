@@ -34,4 +34,66 @@ public sealed class ControllerRegistryTests
         registry.Register(Identity("a"), DateTimeOffset.UtcNow);
         Assert.DoesNotContain("a", registry.Snapshot.ExcludedControllerIds);
     }
+
+    [Fact]
+    public void RegisteringRenamedIdentityPreservesAssignmentAndOverride()
+    {
+        var initial = new SettingsDocument
+        {
+            Controllers = [new()
+            {
+                StableId = "a", DisplayName = "Old name", RegistrationOrder = 2,
+                PreferredVJoyId = 7
+            }],
+            Overrides = new() { ["a"] = new() { HomeButton = HomeButtonMode.Disabled } }
+        };
+        var registry = new ControllerRegistry(initial);
+
+        RegisteredController updated = registry.Register(
+            new("a", "New name", 0x1949, 0x0402), DateTimeOffset.UtcNow);
+
+        Assert.Equal("New name", updated.DisplayName);
+        Assert.Equal(2, updated.RegistrationOrder);
+        Assert.Equal((uint)7, updated.PreferredVJoyId);
+        Assert.Equal(HomeButtonMode.Disabled,
+            registry.Snapshot.Overrides["a"].HomeButton);
+    }
+
+    [Fact]
+    public void IdentityMigrationPreservesOrderAssignmentAndOverride()
+    {
+        var initial = new SettingsDocument
+        {
+            Controllers = [new()
+            {
+                StableId = "legacy", DisplayName = "Controller",
+                RegistrationOrder = 3, PreferredVJoyId = 7
+            }],
+            Overrides = new() { ["legacy"] = new() { HomeButton = HomeButtonMode.Disabled } }
+        };
+        var registry = new ControllerRegistry(initial);
+
+        RegisteredController migrated = registry.MigrateIdentity(
+            "legacy", Identity("persistent"), DateTimeOffset.UtcNow);
+
+        Assert.Equal(3, migrated.RegistrationOrder);
+        Assert.Equal((uint)7, migrated.PreferredVJoyId);
+        Assert.DoesNotContain("legacy", registry.Snapshot.Overrides.Keys);
+        Assert.Equal(HomeButtonMode.Disabled,
+            registry.Snapshot.Overrides["persistent"].HomeButton);
+    }
+
+    [Fact]
+    public void ExcludedIdentityMigrationKeepsControllerExcludedAfterRePair()
+    {
+        var registry = new ControllerRegistry(new SettingsDocument
+        {
+            ExcludedControllerIds = ["legacy"]
+        });
+
+        Assert.True(registry.MigrateExcludedIdentity("legacy", "persistent"));
+
+        Assert.DoesNotContain("legacy", registry.Snapshot.ExcludedControllerIds);
+        Assert.Contains("persistent", registry.Snapshot.ExcludedControllerIds);
+    }
 }

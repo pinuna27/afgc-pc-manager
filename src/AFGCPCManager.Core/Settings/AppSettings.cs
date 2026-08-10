@@ -6,8 +6,7 @@ public sealed record AppSettings
     public bool ShowTrayOnAutomaticStart { get; init; } = true;
     public bool AutomaticallyFindControllers { get; init; } = true;
     public bool HidePhysicalControllers { get; init; } = true;
+    public bool ControlIdentificationLights { get; init; }
     public bool AutomaticallyCheckForUpdates { get; init; } = true;
-    public bool AutomaticallyInstallUpdates { get; init; }
     public bool ShowNotifications { get; init; } = true;
-    public string? SkippedUpdateVersion { get; init; }
 }

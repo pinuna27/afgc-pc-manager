@@ -19,6 +19,8 @@ public sealed class GitHubSignedReleaseClientTests : IDisposable
         VerifiedRelease release = await client.GetLatestAsync("pinuna27", "afgc-pc-manager", TestContext.Current.CancellationToken);
         string path = await client.DownloadAssetAsync(release, "AFGCPCManager-Setup-x64.exe", _root, cancellationToken: TestContext.Current.CancellationToken);
         Assert.Equal(asset, await File.ReadAllBytesAsync(path, TestContext.Current.CancellationToken));
+        Assert.Equal(bundle.Manifest, release.ManifestBytes.ToArray());
+        Assert.Equal(bundle.Signature, release.SignatureBytes.ToArray());
     }
     [Fact]
     public async Task RejectsManifestWhoseVersionDiffersFromTag()
@@ -26,6 +28,26 @@ public sealed class GitHubSignedReleaseClientTests : IDisposable
         byte[] asset = [1, 2, 3]; using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var bundle = Bundle(key, asset, "1.3.0", "v1.2.0");
         using var http = new HttpClient(new ReleaseHandler(bundle.ReleaseJson, bundle.Manifest, bundle.Signature, asset)); var client = new GitHubSignedReleaseClient(http, new(key.ExportSubjectPublicKeyInfoPem()));
         await Assert.ThrowsAsync<InvalidDataException>(() => client.GetLatestAsync("pinuna27", "afgc-pc-manager", TestContext.Current.CancellationToken));
+    }
+    [Fact]
+    public async Task AcceptsEquivalentShortManifestVersion()
+    {
+        byte[] asset = [1, 2, 3]; using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var bundle = Bundle(key, asset, "1.2", "v1.2.0");
+        using var http = new HttpClient(new ReleaseHandler(bundle.ReleaseJson, bundle.Manifest, bundle.Signature, asset)); var client = new GitHubSignedReleaseClient(http, new(key.ExportSubjectPublicKeyInfoPem()));
+
+        VerifiedRelease release = await client.GetLatestAsync("pinuna27", "afgc-pc-manager", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new Version(1, 2, 0), release.Version);
+    }
+    [Fact]
+    public async Task RejectsNullGitHubAssetList()
+    {
+        byte[] asset = [1, 2, 3]; using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var bundle = Bundle(key, asset, "1.2.0");
+        string invalidRelease = JsonSerializer.Serialize(new { tag_name = "v1.2.0", html_url = "https://github.com/pinuna27/afgc-pc-manager/releases/tag/v1.2.0", draft = false, prerelease = false, assets = (object?)null });
+        using var http = new HttpClient(new ReleaseHandler(invalidRelease, bundle.Manifest, bundle.Signature, asset)); var client = new GitHubSignedReleaseClient(http, new(key.ExportSubjectPublicKeyInfoPem()));
+
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            client.GetLatestAsync("pinuna27", "afgc-pc-manager", TestContext.Current.CancellationToken));
     }
     [Fact]
     public async Task DeletesDownloadWhenHashDoesNotMatch()

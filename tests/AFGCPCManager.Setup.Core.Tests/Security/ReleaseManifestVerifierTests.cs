@@ -32,6 +32,20 @@ public sealed class ReleaseManifestVerifierTests
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256); byte[] json = Manifest("../setup.exe");
         var result = new ReleaseManifestVerifier(key.ExportSubjectPublicKeyInfoPem()).Verify(json, Sign(key, json)); Assert.False(result.IsValid);
     }
+    [Theory]
+    [InlineData("{\"schemaVersion\":1}")]
+    [InlineData("{\"schemaVersion\":1,\"version\":null,\"architecture\":\"x64\",\"assets\":[]}")]
+    [InlineData("{\"schemaVersion\":1,\"version\":\"1.0\",\"architecture\":null,\"assets\":[null]}")]
+    public void RejectsSignedManifestWithMissingOrNullRequiredValues(string json)
+    {
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        byte[] data = System.Text.Encoding.UTF8.GetBytes(json);
+
+        ManifestVerificationResult result = new ReleaseManifestVerifier(key.ExportSubjectPublicKeyInfoPem())
+            .Verify(data, Sign(key, data));
+
+        Assert.False(result.IsValid);
+    }
     private static byte[] Manifest(string name = "AFGCPCManager-Setup-x64.exe") => JsonSerializer.SerializeToUtf8Bytes(new ReleaseManifest { Version = "1.2.0", Architecture = "x64", PublishedAtUtc = DateTimeOffset.Parse("2026-01-01T00:00:00Z"), Assets = [new(name, new string('A', 64), 1234)], VJoy = new("BrunnerInnovation/vJoy", "v2.2.2.0", "2.2.2.0", "vJoySetup.exe", new string('B', 64), "Brunner", false) });
     private static byte[] Sign(ECDsa key, byte[] data) => key.SignData(data, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
 }

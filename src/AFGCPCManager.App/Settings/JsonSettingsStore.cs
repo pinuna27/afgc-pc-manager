@@ -39,8 +39,8 @@ internal sealed class JsonSettingsStore(string path) : ISettingsStore
             string temporary = path + ".tmp";
             await using (FileStream stream = new(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
             { await JsonSerializer.SerializeAsync(stream, document, Options, cancellationToken); await stream.FlushAsync(cancellationToken); }
-            if (File.Exists(path)) File.Copy(path, path + ".bak", true);
-            File.Move(temporary, path, true);
+            if (File.Exists(path)) File.Replace(temporary, path, path + ".bak", ignoreMetadataErrors: true);
+            else File.Move(temporary, path);
         }
         finally { _gate.Release(); }
     }

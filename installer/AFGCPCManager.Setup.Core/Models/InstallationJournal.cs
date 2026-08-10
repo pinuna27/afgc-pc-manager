@@ -19,6 +19,7 @@ public sealed record PendingDependencyOperation(
     string TargetVersion,
     string InstallerPath,
     DependencyOperationPhase Phase,
-    bool RestartRequired);
+    bool RestartRequired,
+    DateTimeOffset? BootStartedAtUtc = null);
 
 public enum DependencyOperationPhase { Prepared, InstallerStarted, RestartRequired }

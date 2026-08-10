@@ -1,4 +1,5 @@
 using AFGCPCManager.Setup.Core.Models;
+using AFGCPCManager.Setup.Core.Dependencies;
 
 namespace AFGCPCManager.Setup.Core.Security;
 
@@ -19,7 +20,9 @@ public sealed class LocalReleaseBundleVerifier(ReleaseManifestVerifier manifestV
         ManifestVerificationResult result = manifestVerifier.Verify(manifest, signature);
         if (!result.IsValid) throw new InvalidDataException(result.FailureReason);
         ReleaseManifest verified = result.Manifest!;
-        if (!Version.TryParse(verified.Version, out Version? version) || version != expectedVersion)
+        if (!Version.TryParse(verified.Version.TrimStart('v', 'V'), out Version? version)
+            || DependencyPlanBuilder.IsOlder(version, expectedVersion)
+            || DependencyPlanBuilder.IsOlder(expectedVersion, version))
             throw new InvalidDataException("The local release manifest version does not match setup.");
 
         string archiveName = Path.GetFileName(archivePath);

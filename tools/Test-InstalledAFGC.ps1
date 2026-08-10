@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$OutputPath,
-    [switch]$RequireController
+    [switch]$RequireController,
+    [switch]$RequirePhysicalHidden
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,23 +17,46 @@ $registration = Get-ItemProperty -LiteralPath $uninstallKey -ErrorAction Silentl
 $installDirectory = if ($registration.InstallLocation) { [string]$registration.InstallLocation } else { Join-Path $env:ProgramFiles 'AFGC PC Manager' }
 Add-Check 'Windows uninstall registration' ($null -ne $registration) $(if ($registration) { $uninstallKey } else { 'Registration not found.' })
 
-foreach ($name in @('AFGCPCManager.exe', 'AFGCPCManager.Setup.exe', 'AFGCPCManager.Uninstaller.exe', 'install-journal.json')) {
+foreach ($name in @('AFGCPCManager.exe', 'AFGCPCManager.HidVisibilityProbe.exe', 'AFGCPCManager.Setup.exe', 'AFGCPCManager.Uninstaller.exe', 'install-journal.json')) {
     $path = Join-Path $installDirectory $name
     Add-Check "Installed file: $name" (Test-Path -LiteralPath $path -PathType Leaf) $path
 }
 
-$vjoy = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+$pnpDevices = @()
+try {
+    $pnpDevices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop)
+    Add-Check 'PnP inventory query' $true 'Windows device inventory is readable.'
+}
+catch {
+    Add-Check 'PnP inventory query' $false "Run this audit from an elevated PowerShell window. $($_.Exception.Message)"
+}
+
+$vjoy = $pnpDevices | Where-Object {
     $_.FriendlyName -match 'vJoy' -or $_.InstanceId -match 'ROOT\\VID_1234&PID_BEAD'
 }
 Add-Check 'vJoy device present' ($null -ne $vjoy) $(if ($vjoy) { ($vjoy.FriendlyName -join ', ') } else { 'No present vJoy device found.' })
 
 $hidHide = Get-Service -Name 'HidHide' -ErrorAction SilentlyContinue
 Add-Check 'HidHide service present' ($null -ne $hidHide) $(if ($hidHide) { "Status: $($hidHide.Status)" } else { 'HidHide service not found.' })
+Add-Check 'HidHide service running' ($null -ne $hidHide -and $hidHide.Status -eq 'Running') $(if ($hidHide) { "Status: $($hidHide.Status)" } else { 'HidHide service not found.' })
 
-$controller = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object {
+$controller = $pnpDevices | Where-Object {
     $_.InstanceId -match 'VID_1949&PID_0402|VID&00021949_PID&0402' -or $_.FriendlyName -eq 'Amazon Fire Game Controller'
 }
-Add-Check 'Amazon Fire Game Controller present' ($null -ne $controller) $(if ($controller) { ($controller.FriendlyName -join ', ') } else { 'Pair and wake the controller, then rerun.' }) $RequireController.IsPresent
+Add-Check 'Amazon Fire Game Controller present' ($null -ne $controller) $(if ($controller) { ($controller.FriendlyName -join ', ') } else { 'Pair and wake the controller, then rerun.' }) ($RequireController.IsPresent -or $RequirePhysicalHidden.IsPresent)
+
+if ($RequirePhysicalHidden) {
+    $application = Get-Process -Name 'AFGCPCManager' -ErrorAction SilentlyContinue
+    Add-Check 'AFGC PC Manager running for isolation test' ($null -ne $application) $(if ($application) { "Process count: $($application.Count)" } else { 'Start AFGC PC Manager, then rerun.' })
+    $probe = Join-Path $installDirectory 'AFGCPCManager.HidVisibilityProbe.exe'
+    if (Test-Path -LiteralPath $probe -PathType Leaf) {
+        $probeOutput = & $probe --assert-none-visible 2>&1 | Out-String
+        $probeExit = $LASTEXITCODE
+        Add-Check 'Physical controller hidden from independent process' ($probeExit -eq 0) $(if ($probeOutput.Trim()) { $probeOutput.Trim() } else { "Probe exit code: $probeExit" })
+    } else {
+        Add-Check 'Physical controller hidden from independent process' $false 'Visibility probe is missing.'
+    }
+}
 
 $signature = Get-AuthenticodeSignature -LiteralPath (Join-Path $installDirectory 'AFGCPCManager.exe') -ErrorAction SilentlyContinue
 Add-Check 'Application publisher signature' ($signature.Status -eq 'Valid') $(if ($signature) { "Status: $($signature.Status)" } else { 'Application executable unavailable.' }) $false

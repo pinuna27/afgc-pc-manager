@@ -15,12 +15,24 @@ public sealed class PayloadArchiveExtractorTests : IDisposable
     [Fact]
     public void RejectsPathTraversal()
     {
-        string zip = Create(("../escape.exe", "bad")); Assert.Throws<InvalidDataException>(() => new PayloadArchiveExtractor().Extract(zip, Path.Combine(_root, "out")));
+        string zip = Create(("safe.exe", "partial"), ("../escape.exe", "bad"));
+        string output = Path.Combine(_root, "out");
+        Assert.Throws<InvalidDataException>(() => new PayloadArchiveExtractor().Extract(zip, output));
+        Assert.False(Directory.Exists(output));
     }
     [Fact]
     public void RejectsExpandedSizeLimit()
     {
-        string zip = Create(("large.bin", "123456")); Assert.Throws<InvalidDataException>(() => new PayloadArchiveExtractor(5).Extract(zip, Path.Combine(_root, "out")));
+        string zip = Create(("large.bin", "123456")); string output = Path.Combine(_root, "out");
+        Assert.Throws<InvalidDataException>(() => new PayloadArchiveExtractor(5).Extract(zip, output));
+        Assert.False(Directory.Exists(output));
+    }
+    [Fact]
+    public void RejectsCaseInsensitiveDuplicatePaths()
+    {
+        string zip = Create(("app.exe", "first"), ("APP.EXE", "second")); string output = Path.Combine(_root, "out");
+        Assert.Throws<InvalidDataException>(() => new PayloadArchiveExtractor().Extract(zip, output));
+        Assert.False(Directory.Exists(output));
     }
     private string Create(params (string Name, string Content)[] entries)
     {

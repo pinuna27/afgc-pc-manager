@@ -21,6 +21,37 @@ public sealed class DurableSetupStagingTests : IDisposable
         Assert.False(Directory.Exists(bundle.Directory));
     }
 
+    [Fact]
+    public void StagesSelfContainedLocalResumeWithoutCopyingWholePayload()
+    {
+        string source = Path.Combine(_root, "local-source"); Directory.CreateDirectory(source);
+        string setup = Write(source, "setup.exe", "setup");
+        string manifest = Write(source, "manifest.json", "manifest");
+        string signature = Write(source, "manifest.sig", "signature");
+
+        DurableLocalSetupBundle bundle = DurableSetupStaging.StageLocal(
+            Path.Combine(_root, "durable-local"), new(2, 0), setup, manifest, signature);
+
+        Assert.Equal("setup", File.ReadAllText(bundle.SetupPath));
+        Assert.True(Directory.Exists(bundle.PayloadDirectory));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(bundle.PayloadDirectory));
+        Assert.Equal("manifest", File.ReadAllText(bundle.ManifestPath!));
+        Assert.Equal("signature", File.ReadAllText(bundle.SignaturePath!));
+        DurableSetupStaging.Cleanup(bundle);
+        Assert.False(Directory.Exists(bundle.Directory));
+    }
+
+    [Fact]
+    public void LocalResumeRequiresManifestAndSignatureTogether()
+    {
+        string source = Path.Combine(_root, "invalid-local"); Directory.CreateDirectory(source);
+        string setup = Write(source, "setup.exe", "setup");
+        string manifest = Write(source, "manifest.json", "manifest");
+
+        Assert.Throws<ArgumentException>(() => DurableSetupStaging.StageLocal(
+            Path.Combine(_root, "durable-invalid"), new(2, 0), setup, manifest, null));
+    }
+
     private static string Write(string directory, string name, string contents) { string path = Path.Combine(directory, name); File.WriteAllText(path, contents); return path; }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

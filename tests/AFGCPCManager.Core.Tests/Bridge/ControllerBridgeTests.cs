@@ -42,17 +42,116 @@ public sealed class ControllerBridgeTests
         Assert.Equal([ConsumerAction.PlayPause, ConsumerAction.PlayPause], consumer.Actions);
     }
 
+    [Fact]
+    public async Task InputFailureStillNeutralizesOutput()
+    {
+        var input = new ThrowingInput();
+        var output = new FakeOutput();
+        await using var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        await Assert.ThrowsAsync<IOException>(() => bridge.RunAsync());
+
+        Assert.Contains(output.States, state => state.IsButtonPressed(1));
+        Assert.Equal(VirtualGamepadState.Neutral, output.States[^1]);
+    }
+
+    [Fact]
+    public async Task InputAndEmergencyNeutralFailuresAreBothReported()
+    {
+        var input = new ThrowingInput();
+        var output = new FakeOutput { ThrowOnWriteCall = 3 };
+        await using var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        AggregateException error = await Assert.ThrowsAsync<AggregateException>(
+            () => bridge.RunAsync());
+
+        Assert.Contains(error.InnerExceptions,
+            ex => ex is IOException { Message: "simulated disconnect failure" });
+        Assert.Contains(error.InnerExceptions,
+            ex => ex is IOException { Message: "simulated neutral write failure" });
+    }
+
+    [Fact]
+    public async Task OutputCleanupFailureStillDisposesInputSubscription()
+    {
+        var input = new FakeInput([]);
+        var output = new FakeOutput { ThrowOnDispose = true };
+        var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        IOException error = await Assert.ThrowsAsync<IOException>(async () =>
+            await bridge.DisposeAsync());
+
+        Assert.Equal("simulated output cleanup failure", error.Message);
+        Assert.True(input.Disposed);
+    }
+
+    [Fact]
+    public async Task AllCleanupStepsRunAndMultipleFailuresAreReported()
+    {
+        var input = new FakeInput([]) { ThrowOnDispose = true };
+        var output = new FakeOutput
+        {
+            ThrowOnWrite = true,
+            ThrowOnDispose = true
+        };
+        var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        AggregateException error = await Assert.ThrowsAsync<AggregateException>(async () =>
+            await bridge.DisposeAsync());
+
+        Assert.Equal(3, error.InnerExceptions.Count);
+        Assert.True(output.DisposeAttempted);
+        Assert.True(input.Disposed);
+    }
+
     private sealed class FakeInput(IEnumerable<byte[]> reports) : IRawControllerInput
     {
+        public bool Disposed { get; private set; }
+        public bool ThrowOnDispose { get; init; }
         public async IAsyncEnumerable<RawControllerReport> ReadReportsAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         { foreach (byte[] report in reports) { cancellationToken.ThrowIfCancellationRequested(); yield return new(report); await Task.Yield(); } }
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ThrowOnDispose
+                ? ValueTask.FromException(new IOException("simulated input cleanup failure"))
+                : ValueTask.CompletedTask;
+        }
+    }
+    private sealed class ThrowingInput : IRawControllerInput
+    {
+        public async IAsyncEnumerable<RawControllerReport> ReadReportsAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            yield return new(new byte[] { 1, 128, 127, 128, 127, 0, 0, 1, 0, 0, 92 });
+            await Task.Yield();
+            throw new IOException("simulated disconnect failure");
+        }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     private sealed class FakeOutput : IGamepadOutputSession
     {
         public uint DeviceId => 1; public List<VirtualGamepadState> States { get; } = [];
-        public ValueTask WriteAsync(VirtualGamepadState state, CancellationToken cancellationToken = default) { States.Add(state); return ValueTask.CompletedTask; }
-        public void Dispose() { }
+        public bool ThrowOnWrite { get; init; }
+        public int? ThrowOnWriteCall { get; init; }
+        public bool ThrowOnDispose { get; init; }
+        public bool DisposeAttempted { get; private set; }
+        public ValueTask WriteAsync(VirtualGamepadState state, CancellationToken cancellationToken = default)
+        {
+            States.Add(state);
+            return ThrowOnWrite || States.Count == ThrowOnWriteCall
+                ? ValueTask.FromException(new IOException("simulated neutral write failure"))
+                : ValueTask.CompletedTask;
+        }
+        public void Dispose()
+        {
+            DisposeAttempted = true;
+            if (ThrowOnDispose) throw new IOException("simulated output cleanup failure");
+        }
     }
     private sealed class FakeConsumer : IConsumerActionEmitter
     {

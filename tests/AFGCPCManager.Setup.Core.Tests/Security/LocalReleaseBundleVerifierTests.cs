@@ -25,6 +25,17 @@ public sealed class LocalReleaseBundleVerifierTests : IDisposable
         await Assert.ThrowsAsync<InvalidDataException>(() => verifier.VerifyAsync(manifest, signature, archive, new(1, 2, 3), TestContext.Current.CancellationToken));
     }
 
+    [Fact]
+    public async Task AcceptsEquivalentShortExpectedVersion()
+    {
+        (LocalReleaseBundleVerifier verifier, string manifest, string signature, string archive) = await CreateBundleAsync();
+
+        ReleaseManifest result = await verifier.VerifyAsync(
+            manifest, signature, archive, new(1, 2, 3, 0), TestContext.Current.CancellationToken);
+
+        Assert.Equal("1.2.3", result.Version);
+    }
+
     private async Task<(LocalReleaseBundleVerifier, string, string, string)> CreateBundleAsync()
     {
         Directory.CreateDirectory(_root);

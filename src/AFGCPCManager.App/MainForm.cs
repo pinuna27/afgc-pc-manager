@@ -1,53 +1,246 @@
+using AFGCPCManager.UI;
+
 namespace AFGCPCManager.App;
 
 internal sealed class MainForm : Form
 {
     private readonly BridgeRuntime _runtime;
-    private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 42, Padding = new(12), AutoEllipsis = true };
-    private readonly ListView _controllers = new() { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, HideSelection = false };
+    private readonly AfgcStatusBanner _status = new();
+    private readonly DataGridView _controllers = new()
+    {
+        Dock = DockStyle.Fill,
+        // DataGridView's native cell tooltips are topmost windows and can remain
+        // visible after this form loses focus or is hidden to the notification area.
+        ShowCellToolTips = false
+    };
+    private readonly Label _emptyState = new()
+    {
+        Dock = DockStyle.Fill,
+        TextAlign = ContentAlignment.MiddleCenter,
+        ForeColor = UiTheme.TextMuted,
+        Text = "No controllers are registered yet.\n\nConnect a Fire controller, then choose Add controller."
+    };
+    private readonly Label _controllerCount = UiTheme.Body("0 registered", muted: true);
 
     public MainForm(BridgeRuntime runtime)
     {
-        _runtime = runtime; Text = "AFGC PC Manager"; ClientSize = new(680, 380); MinimumSize = new(540, 300);
-        _controllers.Columns.Add("Controller", 300); _controllers.Columns.Add("Status", 150); _controllers.Columns.Add("Output", 130);
-        var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new(8), FlowDirection = FlowDirection.RightToLeft };
-        var add = new Button { Text = "Add controller", AutoSize = true }; add.Click += async (_, _) => await AddControllerAsync();
-        var settings = new Button { Text = "Settings", AutoSize = true }; settings.Click += async (_, _) => await OpenSettingsAsync(null);
-        toolbar.Controls.Add(add); toolbar.Controls.Add(settings);
-        Controls.Add(_controllers); Controls.Add(toolbar); Controls.Add(_status);
-        var rowMenu = new ContextMenuStrip(); rowMenu.Items.Add("Edit controller settings", null, async (_, _) => await OpenSettingsAsync(SelectedId)); rowMenu.Items.Add("Remove controller", null, async (_, _) => await RemoveSelectedAsync());
-        _controllers.ContextMenuStrip = rowMenu; rowMenu.Opening += (_, e) => e.Cancel = SelectedId is null;
-        runtime.StatusChanged += (_, value) => SetStatus(value); runtime.ControllersChanged += (_, rows) => ApplyRows(rows);
-        FormClosing += (_, e) => { if (e.CloseReason == CloseReason.UserClosing) { e.Cancel = true; Hide(); } };
+        _runtime = runtime;
+        Text = "AFGC PC Manager";
+        ClientSize = new Size(940, 590);
+        MinimumSize = new Size(760, 480);
+
+        ConfigureControllerGrid();
+
+        var add = new AfgcButton("Add controller", AfgcButtonKind.Primary);
+        add.Click += async (_, _) => await RunUiActionAsync(AddControllerAsync, "add the controller");
+        var settings = new AfgcButton("Settings");
+        settings.Click += async (_, _) => await RunUiActionAsync(
+            () => OpenSettingsAsync(null), "save settings");
+        Panel header = UiTheme.FormHeader(
+            "AFGC PC Manager",
+            "Amazon Fire controller bridge",
+            UiTheme.ButtonRow(add, settings));
+
+        var cardHeading = UiTheme.SectionHeading("Controllers");
+        var cardHeader = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 56,
+            Padding = new Padding(18, 0, 18, 0),
+            ColumnCount = 2,
+            BackColor = UiTheme.Surface
+        };
+        cardHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        cardHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        cardHeading.Anchor = AnchorStyles.Left;
+        _controllerCount.Anchor = AnchorStyles.Right;
+        cardHeader.Controls.Add(cardHeading, 0, 0);
+        cardHeader.Controls.Add(_controllerCount, 1, 0);
+
+        var tableHost = new Panel { Dock = DockStyle.Fill, BackColor = UiTheme.Surface };
+        tableHost.Controls.Add(_controllers);
+        tableHost.Controls.Add(_emptyState);
+        var cardBody = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(1),
+            BackColor = UiTheme.Surface
+        };
+        cardBody.Controls.Add(tableHost);
+        cardBody.Controls.Add(cardHeader);
+        var card = new AfgcCard { Dock = DockStyle.Fill, Padding = new Padding(1) };
+        card.Controls.Add(cardBody);
+
+        var content = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(28, 24, 28, 24),
+            BackColor = UiTheme.Canvas
+        };
+        content.Controls.Add(card);
+
+        Controls.Add(content);
+        Controls.Add(_status);
+        Controls.Add(UiTheme.Divider());
+        Controls.Add(header);
+
+        var rowMenu = new ContextMenuStrip
+        {
+            Font = UiTheme.BodyFont,
+            ShowImageMargin = false,
+            BackColor = UiTheme.Surface,
+            ForeColor = UiTheme.Text
+        };
+        rowMenu.Items.Add("Edit controller settings", null,
+            async (_, _) => await RunUiActionAsync(
+                () => OpenSettingsAsync(SelectedId), "save settings"));
+        rowMenu.Items.Add(new ToolStripSeparator());
+        rowMenu.Items.Add("Remove controller", null,
+            async (_, _) => await RunUiActionAsync(RemoveSelectedAsync, "remove the controller"));
+        _controllers.ContextMenuStrip = rowMenu;
+        rowMenu.Opening += (_, e) => e.Cancel = SelectedId is null;
+        _controllers.CellDoubleClick += async (_, e) =>
+        {
+            if (e.RowIndex >= 0)
+                await RunUiActionAsync(() => OpenSettingsAsync(SelectedId), "save settings");
+        };
+
+        runtime.StatusChanged += (_, value) => SetStatus(value);
+        runtime.ControllersChanged += (_, rows) => ApplyRows(rows);
+        FormClosing += (_, e) =>
+        {
+            if (e.CloseReason != CloseReason.UserClosing) return;
+            e.Cancel = true;
+            Hide();
+        };
+        UiTheme.Apply(this);
     }
 
-    private string? SelectedId => _controllers.SelectedItems.Count == 1 ? _controllers.SelectedItems[0].Name : null;
-    public void SetStatus(string value) { if (InvokeRequired) { BeginInvoke(() => SetStatus(value)); return; } _status.Text = value; }
-    private void ApplyRows(IReadOnlyList<ControllerRowModel> rows)
+    private void ConfigureControllerGrid()
     {
-        if (InvokeRequired) { BeginInvoke(() => ApplyRows(rows)); return; }
-        _controllers.BeginUpdate(); _controllers.Items.Clear();
-        foreach (var row in rows)
+        UiTheme.StyleDataGrid(_controllers);
+        _controllers.Columns.Add(new DataGridViewTextBoxColumn
         {
-            var item = new ListViewItem($"Controller {row.RegistrationOrder}: {row.DisplayName}") { Name = row.StableId };
-            item.SubItems.Add(row.IsConnected ? (row.VJoyDeviceId is null ? "Needs vJoy" : "Connected") : "Disconnected");
-            item.SubItems.Add(row.VJoyDeviceId is uint id ? $"vJoy {id}" : "—"); _controllers.Items.Add(item);
-        }
-        _controllers.EndUpdate();
+            Name = "Controller",
+            HeaderText = "CONTROLLER",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 42,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        _controllers.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Lights",
+            HeaderText = "LIGHTS",
+            ToolTipText = $"{IdentificationLightDisplay.OnGlyph} = light on    {IdentificationLightDisplay.OffGlyph} = light off",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 17,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        _controllers.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Status",
+            HeaderText = "STATUS",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 25,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        _controllers.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Output",
+            HeaderText = "OUTPUT",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 16,
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
     }
+
+    private string? SelectedId => _controllers.SelectedRows.Count == 1
+        ? _controllers.SelectedRows[0].Tag as string
+        : null;
+
+    public void SetStatus(string value)
+    {
+        if (IsDisposed || Disposing) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(() => SetStatus(value)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+        _status.SetMessage(value);
+    }
+
+    internal void ApplyRows(IReadOnlyList<ControllerRowModel> rows)
+    {
+        if (IsDisposed || Disposing) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(() => ApplyRows(rows)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+
+        _controllers.Rows.Clear();
+        foreach (ControllerRowModel row in rows)
+        {
+            string state = row.IsConnected
+                ? row.Issue ?? (row.VJoyDeviceId is null ? "Needs vJoy" : "Connected")
+                : "Disconnected";
+            int index = _controllers.Rows.Add(
+                $"Controller {row.RegistrationOrder}  ·  {row.DisplayName}",
+                IdentificationLightDisplay.Format(row.IdentificationLightMask),
+                state,
+                row.VJoyDeviceId is uint id ? $"vJoy {id}" : "Not assigned");
+            DataGridViewRow gridRow = _controllers.Rows[index];
+            gridRow.Tag = row.StableId;
+            gridRow.Cells[1].Style.ForeColor = row.IdentificationLightMask is null
+                ? UiTheme.TextMuted : UiTheme.Primary;
+            gridRow.Cells[2].Style.ForeColor = row.Issue is not null
+                ? UiTheme.Warning
+                : row.IsConnected ? UiTheme.Success : UiTheme.TextMuted;
+            gridRow.Cells[3].Style.ForeColor = UiTheme.TextMuted;
+        }
+        bool hasRows = rows.Count > 0;
+        _controllers.ClearSelection();
+        _controllers.Visible = hasRows;
+        _emptyState.Visible = !hasRows;
+        _controllerCount.Text = rows.Count == 1 ? "1 registered" : $"{rows.Count} registered";
+    }
+
     private async Task AddControllerAsync()
     {
         using var dialog = new AddControllerForm(_runtime.GetAddCandidates());
-        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.SelectedStableId is string id) await _runtime.AddControllerAsync(id);
+        if (dialog.ShowDialog(this) == DialogResult.OK
+            && dialog.SelectedStableId is string id)
+            await _runtime.AddControllerAsync(id);
     }
+
     private async Task RemoveSelectedAsync()
     {
-        string? id = SelectedId; if (id is null) return;
-        if (MessageBox.Show(this, "Remove this controller from AFGC PC Manager? Bluetooth pairing will not be removed.", "Remove controller", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == DialogResult.Yes) await _runtime.RemoveControllerAsync(id);
+        string? id = SelectedId;
+        if (id is null) return;
+        if (MessageBox.Show(this,
+                "Remove this controller from AFGC PC Manager?\n\nIts Bluetooth pairing will stay intact.",
+                "Remove controller", MessageBoxButtons.YesNo, MessageBoxIcon.Warning)
+            == DialogResult.Yes)
+            await _runtime.RemoveControllerAsync(id);
     }
+
     private async Task OpenSettingsAsync(string? controllerId)
     {
-        using var dialog = new SettingsForm(_runtime.GetSettings(), controllerId, _runtime.GetDiagnostics);
-        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is not null) await _runtime.SaveSettingsAsync(dialog.Result);
+        using var dialog = new SettingsForm(
+            _runtime.GetSettings(), controllerId, _runtime.GetDiagnostics);
+        if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is not null)
+            await _runtime.SaveSettingsAsync(dialog.Result);
+    }
+
+    private async Task RunUiActionAsync(Func<Task> action, string operation)
+    {
+        try { await action(); }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"Could not {operation}.\n\n{ex.Message}",
+                "AFGC PC Manager", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 }

@@ -20,7 +20,21 @@ internal sealed class VJoyOutputSession(IVJoyNativeApi api, uint deviceId, IRead
     public void Dispose()
     {
         if (_disposed) return;
-        try { var neutral = VJoyStateConverter.Convert(DeviceId, VirtualGamepadState.Neutral, ranges); api.Update(DeviceId, ref neutral); }
-        finally { api.Relinquish(DeviceId); released(); _disposed = true; }
+        try
+        {
+            var neutral = VJoyStateConverter.Convert(
+                DeviceId, VirtualGamepadState.Neutral, ranges);
+            api.Update(DeviceId, ref neutral);
+        }
+        finally
+        {
+            try { api.Reset(DeviceId); }
+            finally
+            {
+                api.Relinquish(DeviceId);
+                released();
+                _disposed = true;
+            }
+        }
     }
 }

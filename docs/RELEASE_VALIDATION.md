@@ -14,7 +14,7 @@ a stable release. Unit tests do not replace this hardware test.
 5. From an elevated PowerShell window in the repository, run:
 
    ```powershell
-   .\tools\Test-InstalledAFGC.ps1 -RequireController -OutputPath .\artifacts\installed-audit.json
+   .\tools\Test-InstalledAFGC.ps1 -RequireController -RequirePhysicalHidden -OutputPath .\artifacts\installed-audit.json
    ```
 
    The publisher-signature line is informational until releases are
@@ -33,17 +33,28 @@ a stable release. Unit tests do not replace this hardware test.
 4. Verify both triggers travel smoothly through their full axes and return to
    zero. This is the release-blocking behavior the project exists to restore.
 5. With physical hiding enabled, verify games see only the vJoy controller.
-   Use the recovery shortcut and confirm the physical device becomes visible
-   again.
+   The installed-system audit must report that the independent, non-whitelisted
+   visibility probe sees no physical Fire controller. When the app first adds
+   or changes a HidHide device rule, confirm virtual output remains disabled and
+   the row asks for one controller power-cycle. Turn only that controller off
+   and back on; do not restart its Windows PnP device. Confirm the prompt clears
+   and does not return on later monitoring loops, mapping edits, app crash/relaunch,
+   or ordinary controller reconnects while the rule remains unchanged.
+6. Disable physical hiding and confirm the app releases its vJoy output before
+   restoring the physical controller. Use the recovery shortcut and confirm the
+   physical device becomes visible again.
 
 ## Multiple controllers
 
 1. Pair and wake controllers one at a time.
 2. Confirm each gets a distinct vJoy output. Approve the elevation prompt if a
    new vJoy slot must be configured.
-3. Disconnect and reconnect them in a different order. Confirm their saved vJoy
+3. Enable **Use controller identification lights**. Confirm the physical
+   four-light patterns match the patterns shown in the controller list. Disable
+   it, power-cycle a controller, and confirm the app leaves its LEDs untouched.
+4. Disconnect and reconnect them in a different order. Confirm their saved vJoy
    numbers are reused when available.
-4. Keep another feeder application's vJoy device busy and confirm AFGC PC
+5. Keep another feeder application's vJoy device busy and confirm AFGC PC
    Manager leaves it untouched.
 
 ## Repair, update, and uninstall

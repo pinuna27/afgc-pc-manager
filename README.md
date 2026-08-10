@@ -31,6 +31,8 @@ expects a normal Windows game controller.
 - Preserve the measured stick centers and scale the full trigger ranges.
 - Present an Xbox-style control layout through compatible vJoy devices.
 - Optionally use HidHide to prevent duplicate input from the physical device.
+- Optionally assign stable four-LED identification patterns and show the same
+  patterns in the controller list; when disabled, the app sends no LED reports.
 - Support per-controller mappings and multiple controllers without taking vJoy
   devices already owned by other feeder applications.
 - Manage stable application, vJoy, and HidHide updates while preserving
@@ -60,7 +62,8 @@ The solution can be opened directly in JetBrains Rider or Visual Studio.
 
 ## Repository layout
 
-- `src/` — application, controller logic, Windows transport, vJoy, and HidHide
+- `src/` — application, shared UI system, controller logic, Windows transport,
+  vJoy, and HidHide
 - `installer/` — bootstrapper, uninstaller, verification, and installation logic
 - `tests/` — hardware-independent unit tests
 - `tools/` — controller capture/probe and release-signing utilities

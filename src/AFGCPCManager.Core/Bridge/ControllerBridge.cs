@@ -1,6 +1,7 @@
 using AFGCPCManager.Core.Input;
 using AFGCPCManager.Core.Mapping;
 using AFGCPCManager.Core.Output;
+using System.Runtime.ExceptionServices;
 
 namespace AFGCPCManager.Core.Bridge;
 
@@ -19,6 +20,7 @@ public sealed class ControllerBridge(
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         await output.WriteAsync(VirtualGamepadState.Neutral, cancellationToken);
+        Exception? runFailure = null;
         try
         {
             await foreach (var raw in input.ReadReportsAsync(cancellationToken).WithCancellation(cancellationToken))
@@ -31,10 +33,20 @@ public sealed class ControllerBridge(
                     await consumerEmitter.EmitAsync(action, cancellationToken);
             }
         }
-        finally
+        catch (Exception ex) { runFailure = ex; }
+
+        try { await output.WriteAsync(VirtualGamepadState.Neutral, CancellationToken.None); }
+        catch (Exception neutralFailure)
         {
-            await output.WriteAsync(VirtualGamepadState.Neutral, CancellationToken.None);
+            if (runFailure is null)
+                ExceptionDispatchInfo.Capture(neutralFailure).Throw();
+            throw new AggregateException(
+                "Controller input stopped and virtual-output neutralization also failed.",
+                runFailure, neutralFailure);
         }
+
+        if (runFailure is not null)
+            ExceptionDispatchInfo.Capture(runFailure).Throw();
     }
 
     public async ValueTask ApplyProfileAsync(ControllerMappingProfile profile, CancellationToken cancellationToken = default)
@@ -56,7 +68,17 @@ public sealed class ControllerBridge(
     {
         if (_disposed) return;
         _disposed = true;
+        List<Exception>? failures = null;
         try { await output.WriteAsync(VirtualGamepadState.Neutral); }
-        finally { output.Dispose(); await input.DisposeAsync(); }
+        catch (Exception ex) { (failures ??= []).Add(ex); }
+        try { output.Dispose(); }
+        catch (Exception ex) { (failures ??= []).Add(ex); }
+        try { await input.DisposeAsync(); }
+        catch (Exception ex) { (failures ??= []).Add(ex); }
+
+        if (failures is null) return;
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("Controller bridge cleanup failed.", failures);
     }
 }

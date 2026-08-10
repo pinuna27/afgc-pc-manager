@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>AFGCPCManager.UI</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\afgc-icon.png" LogicalName="AFGCPCManager.UI.Assets.afgc-icon.png" />
+    <EmbeddedResource Include="Assets\afgc-icon.ico" LogicalName="AFGCPCManager.UI.Assets.afgc-icon.ico" />
+  </ItemGroup>
+</Project>

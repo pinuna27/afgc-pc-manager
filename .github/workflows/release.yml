@@ -60,6 +60,7 @@ jobs:
           New-Item -ItemType Directory -Force artifacts/release | Out-Null
           $common = @('--configuration','Release','--runtime','win-x64','--self-contained','true','-p:PublishSingleFile=true','-p:DebugType=None','-p:DebugSymbols=false',"-p:Version=${{ steps.version.outputs.version }}")
           dotnet publish src/AFGCPCManager.App/AFGCPCManager.App.csproj @common --output artifacts/payload
+          dotnet publish src/AFGCPCManager.HidVisibilityProbe/AFGCPCManager.HidVisibilityProbe.csproj @common --output artifacts/payload
           dotnet publish installer/AFGCPCManager.Uninstaller/AFGCPCManager.Uninstaller.csproj @common --output artifacts/payload
 
       - name: Publish online setup
@@ -68,6 +69,10 @@ jobs:
           dotnet publish installer/AFGCPCManager.Bootstrapper/AFGCPCManager.Bootstrapper.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false -p:Version=${{ steps.version.outputs.version }} --output artifacts/setup
           Copy-Item artifacts/setup/AFGCPCManager.Setup.exe artifacts/release/AFGCPCManager-Setup-x64.exe
           Copy-Item artifacts/setup/AFGCPCManager.Setup.exe artifacts/payload/AFGCPCManager.Setup.exe
+          $expected = @('AFGCPCManager.exe','AFGCPCManager.HidVisibilityProbe.exe','AFGCPCManager.Setup.exe','AFGCPCManager.Uninstaller.exe')
+          $actual = @(Get-ChildItem artifacts/payload -File | Select-Object -ExpandProperty Name | Sort-Object)
+          $difference = Compare-Object ($expected | Sort-Object) $actual
+          if ($difference) { throw "Unexpected release payload contents: $($actual -join ', ')" }
           Compress-Archive -Path artifacts/payload/* -DestinationPath artifacts/release/AFGCPCManager-x64.zip
 
       - name: Build and sign release manifest

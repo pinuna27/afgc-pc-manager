@@ -6,6 +6,15 @@ namespace AFGCPCManager.VJoy.Tests;
 public sealed class VJoyBackendTests
 {
     [Fact]
+    public void ReportsWhetherTheDriverIsEnabled()
+    {
+        var api = new FakeVJoyNativeApi { IsEnabled = false };
+        using var backend = new VJoyBackend(api);
+
+        Assert.False(backend.IsDriverEnabled);
+    }
+
+    [Fact]
     public void AcquiresPreferredCompatibleDeviceAndWritesNeutral()
     {
         var api = new FakeVJoyNativeApi(); api.Statuses[2] = VJoyDeviceStatus.Free; api.Statuses[5] = VJoyDeviceStatus.Free;
@@ -43,6 +52,51 @@ public sealed class VJoyBackendTests
         var session = backend.TryAcquire()!;
         session.Dispose();
         Assert.Equal(2, api.Updates.Count);
+        Assert.Equal([(uint)1], api.ResetDevices);
         Assert.Equal([(uint)1], api.Relinquished);
+    }
+
+    [Fact]
+    public void DoesNotAcquireSameDeviceTwiceWhenNativeStatusIsStale()
+    {
+        var api = new FakeVJoyNativeApi();
+        api.Statuses[1] = VJoyDeviceStatus.Free;
+        using var backend = new VJoyBackend(api);
+        using var first = backend.TryAcquire();
+
+        using var second = backend.TryAcquire();
+
+        Assert.NotNull(first);
+        Assert.Null(second);
+        Assert.Equal([(uint)1], api.Acquired);
+    }
+
+    [Fact]
+    public void FailedInitialNeutralWriteRelinquishesAndResetsDevice()
+    {
+        var api = new FakeVJoyNativeApi { UpdateResult = false };
+        api.Statuses[1] = VJoyDeviceStatus.Free;
+        using var backend = new VJoyBackend(api);
+
+        Assert.Throws<VJoyException>(() => backend.TryAcquire());
+
+        Assert.Equal([(uint)1], api.ResetDevices);
+        Assert.Equal([(uint)1], api.Relinquished);
+    }
+
+    [Fact]
+    public void MissingAndBusySlotsAreNeverCapabilityProbed()
+    {
+        var api = new FakeVJoyNativeApi();
+        api.Statuses[1] = VJoyDeviceStatus.Missing;
+        api.Statuses[2] = VJoyDeviceStatus.Busy;
+        using var backend = new VJoyBackend(api);
+
+        IReadOnlyList<OutputDeviceInfo> devices = backend.EnumerateDevices();
+
+        Assert.Null(devices[0].Capabilities);
+        Assert.Null(devices[1].Capabilities);
+        Assert.Equal(0, api.HasAxisCalls);
+        Assert.Equal(0, api.AxisRangeCalls);
     }
 }

@@ -26,6 +26,61 @@ public sealed class ControllerRegistry(SettingsDocument initial)
         }
     }
 
+    public RegisteredController MigrateIdentity(
+        string previousStableId, FireControllerIdentity identity, DateTimeOffset seenUtc)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(previousStableId);
+        ArgumentNullException.ThrowIfNull(identity);
+        lock (_gate)
+        {
+            RegisteredController previous = _document.Controllers.FirstOrDefault(controller =>
+                controller.StableId.Equals(previousStableId, StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("The previous controller registration no longer exists.");
+            if (_document.Controllers.Any(controller =>
+                    controller.StableId.Equals(identity.StableId, StringComparison.Ordinal)
+                    && !controller.StableId.Equals(previousStableId, StringComparison.Ordinal)))
+                throw new InvalidOperationException("The replacement controller identity is already registered.");
+
+            RegisteredController updated = previous with
+            {
+                StableId = identity.StableId,
+                DisplayName = identity.DisplayName,
+                LastSeenUtc = seenUtc
+            };
+            var controllers = _document.Controllers
+                .Where(controller => !controller.StableId.Equals(previousStableId, StringComparison.Ordinal))
+                .Append(updated).OrderBy(controller => controller.RegistrationOrder).ToList();
+            var overrides = new Dictionary<string, ControllerMappingOverrides>(
+                _document.Overrides, StringComparer.Ordinal);
+            if (overrides.Remove(previousStableId, out ControllerMappingOverrides? mapping))
+                overrides[identity.StableId] = mapping;
+            var excluded = new HashSet<string>(_document.ExcludedControllerIds, StringComparer.Ordinal);
+            excluded.Remove(previousStableId);
+            excluded.Remove(identity.StableId);
+            _document = _document with
+            {
+                Controllers = controllers,
+                Overrides = overrides,
+                ExcludedControllerIds = excluded
+            };
+            return updated;
+        }
+    }
+
+    public bool MigrateExcludedIdentity(string previousStableId, string stableId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(previousStableId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(stableId);
+        lock (_gate)
+        {
+            var excluded = new HashSet<string>(_document.ExcludedControllerIds, StringComparer.Ordinal);
+            if (!excluded.Remove(previousStableId)) return false;
+            excluded.Add(stableId);
+            _document = _document with { ExcludedControllerIds = excluded };
+            return true;
+        }
+    }
+
     public bool RemoveAndExclude(string stableId)
     {
         lock (_gate)

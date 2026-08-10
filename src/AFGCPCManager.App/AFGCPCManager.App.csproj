@@ -1,17 +1,37 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>AFGCPCManager</AssemblyName>
     <RootNamespace>AFGCPCManager.App</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationIcon>..\AFGCPCManager.UI\Assets\afgc-icon.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AFGCPCManager.Core\AFGCPCManager.Core.csproj" />
     <ProjectReference Include="..\AFGCPCManager.VJoy\AFGCPCManager.VJoy.csproj" />
     <ProjectReference Include="..\AFGCPCManager.HidHide\AFGCPCManager.HidHide.csproj" />
     <ProjectReference Include="..\AFGCPCManager.Windows\AFGCPCManager.Windows.csproj" />
+    <ProjectReference Include="..\AFGCPCManager.UI\AFGCPCManager.UI.csproj" />
   </ItemGroup>
+  <Target Name="BuildDevelopmentVisibilityProbe"
+          BeforeTargets="CopyDevelopmentVisibilityProbe"
+          Condition="'$(PublishSingleFile)' != 'true'">
+    <MSBuild Projects="..\AFGCPCManager.HidVisibilityProbe\AFGCPCManager.HidVisibilityProbe.csproj"
+             Targets="Build" Properties="Configuration=$(Configuration)" />
+  </Target>
+  <Target Name="CopyDevelopmentVisibilityProbe" AfterTargets="Build"
+          Condition="'$(PublishSingleFile)' != 'true'">
+    <ItemGroup>
+      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.exe" />
+      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.dll" />
+      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.deps.json" />
+      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.runtimeconfig.json" />
+    </ItemGroup>
+    <Copy SourceFiles="@(VisibilityProbeArtifact)" DestinationFolder="$(TargetDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

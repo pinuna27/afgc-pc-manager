@@ -1,8 +1,4 @@
-using System.ComponentModel;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.RegularExpressions;
 using AFGCPCManager.Core.Devices;
 using AFGCPCManager.Windows.RawInput;
 
@@ -10,54 +6,117 @@ namespace AFGCPCManager.Windows.Devices;
 
 public sealed partial class FireControllerDiscovery : IFireControllerDiscovery
 {
-    private const uint RidiDeviceName = 0x20000007, RidiDeviceInfo = 0x2000000b, RimTypeHid = 2;
+    private const uint CrSuccess = 0, CrBufferSmall = 0x1A;
+    private static readonly Guid HidInterfaceClass = new("4D1E55B2-F16F-11CF-88CB-001111000030");
 
     public Task<IReadOnlyList<DiscoveredFireController>> SnapshotAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        uint count = 0, elementSize = (uint)Marshal.SizeOf<RawInputDeviceList>();
-        if (GetRawInputDeviceList(null, ref count, elementSize) != 0) throw new Win32Exception(Marshal.GetLastWin32Error());
-        var devices = new RawInputDeviceList[count];
-        if (count > 0 && GetRawInputDeviceList(devices, ref count, elementSize) == uint.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
-
-        var endpoints = new List<(string GroupKey, PhysicalDeviceEndpoint Endpoint)>();
-        foreach (var device in devices)
+        var endpoints = new List<(string Path, ushort UsagePage, ushort Usage,
+            string? SerialNumber, string? DisplayName)>();
+        foreach (string path in EnumeratePresentHidInterfaces())
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (device.Type != RimTypeHid) continue;
-            string path = GetDeviceName(device.Device);
-            if (!FireDevicePathMatcher.IsMatch(path) || !TryGetHidInfo(device.Device, out var info)) continue;
-            endpoints.Add((NormalizeCollectionPath(path), new(path, checked((ushort)info.UsagePage), checked((ushort)info.Usage))));
+            if (!FireDevicePathMatcher.IsMatch(path)) continue;
+            ControllerDeviceMetadata metadata = ControllerDisplayNameResolver.ResolveMetadata(path);
+            (ushort usagePage, ushort usage) = KnownUsage(path);
+            endpoints.Add((path, usagePage, usage,
+                metadata.SerialNumber, metadata.DisplayName));
         }
 
-        IReadOnlyList<DiscoveredFireController> result = endpoints.GroupBy(x => x.GroupKey, StringComparer.OrdinalIgnoreCase).Select(group =>
+        return Task.FromResult(BuildSnapshot(endpoints));
+    }
+
+    internal static IReadOnlyList<DiscoveredFireController> BuildSnapshot(
+        IEnumerable<(string Path, ushort UsagePage, ushort Usage, string? SerialNumber)> endpoints) =>
+        BuildSnapshot(endpoints.Select(endpoint => (endpoint.Path, endpoint.UsagePage,
+            endpoint.Usage, endpoint.SerialNumber, (string?)null)));
+
+    internal static IReadOnlyList<DiscoveredFireController> BuildSnapshot(
+        IEnumerable<(string Path, ushort UsagePage, ushort Usage, string? SerialNumber,
+            string? DisplayName)> endpoints) =>
+        endpoints.Where(endpoint => FireControllerPathIdentity.IsMatch(endpoint.Path))
+            .Select(endpoint => new
+            {
+                Endpoint = endpoint,
+                NormalizedSerial = FireControllerPathIdentity.NormalizeSerialNumber(
+                    endpoint.SerialNumber)
+            })
+            .GroupBy(endpoint => FireControllerPathIdentity.NormalizeCollectionPath(
+                endpoint.Endpoint.Path), StringComparer.OrdinalIgnoreCase)
+            .SelectMany(collectionGroup =>
+            {
+                string[] serials = collectionGroup
+                    .Select(endpoint => endpoint.NormalizedSerial)
+                    .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                string? inferredSerial = serials.Length == 1 ? serials[0] : null;
+                return collectionGroup.Select(endpoint => new
+                {
+                    endpoint.Endpoint,
+                    EffectiveSerial = endpoint.NormalizedSerial ?? inferredSerial
+                });
+            })
+            .GroupBy(endpoint => FireControllerPathIdentity.CreateStableId(
+                endpoint.Endpoint.Path, endpoint.EffectiveSerial), StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                string stableId = group.Key;
+                string displayName = group.Select(endpoint => endpoint.Endpoint.DisplayName)
+                    .FirstOrDefault(ControllerDisplayNameResolver.IsSpecific)
+                    ?? FireControllerConstants.BluetoothName;
+                var identity = new FireControllerIdentity(stableId,
+                    displayName,
+                    FireControllerConstants.VendorId, FireControllerConstants.ProductId);
+                PhysicalDeviceEndpoint[] groupedEndpoints = group
+                    .GroupBy(endpoint => endpoint.Endpoint.Path, StringComparer.OrdinalIgnoreCase)
+                    .Select(paths => paths.First())
+                    .Select(endpoint => new PhysicalDeviceEndpoint(
+                        endpoint.Endpoint.Path, endpoint.Endpoint.UsagePage,
+                        endpoint.Endpoint.Usage))
+                    .OrderBy(endpoint => endpoint.DevicePath, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                return new DiscoveredFireController(identity, groupedEndpoints, true);
+            })
+            .OrderBy(controller => controller.Identity.StableId, StringComparer.Ordinal)
+            .ToArray();
+
+    internal static string NormalizeCollectionPath(string path) =>
+        FireControllerPathIdentity.NormalizeCollectionPath(path);
+    internal static (ushort UsagePage, ushort Usage) KnownUsage(string path)
+    {
+        if (path.Contains("&Col02", StringComparison.OrdinalIgnoreCase))
+            return (0x0C, 1);
+        return (1, 5);
+    }
+
+    private static string[] EnumeratePresentHidInterfaces()
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            string stableId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("AFGC-PC-MANAGER\0" + group.Key.ToUpperInvariant())));
-            var identity = new FireControllerIdentity(stableId, FireControllerConstants.BluetoothName, FireControllerConstants.VendorId, FireControllerConstants.ProductId);
-            return new DiscoveredFireController(identity, group.Select(x => x.Endpoint).ToArray(), true);
-        }).OrderBy(x => x.Identity.StableId, StringComparer.Ordinal).ToArray();
-        return Task.FromResult(result);
+            Guid interfaceClass = HidInterfaceClass;
+            uint result = CM_Get_Device_Interface_List_SizeW(
+                out uint length, ref interfaceClass, null, 0);
+            if (result != CrSuccess)
+                throw new InvalidOperationException(
+                    $"Windows could not size the HID interface list (CM error 0x{result:X8}).");
+            if (length <= 1) return [];
+            var buffer = new char[length];
+            result = CM_Get_Device_Interface_ListW(
+                ref interfaceClass, null, buffer, length, 0);
+            if (result == CrBufferSmall) continue;
+            if (result != CrSuccess)
+                throw new InvalidOperationException(
+                    $"Windows could not enumerate HID interfaces (CM error 0x{result:X8}).");
+            return new string(buffer).Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        }
+        throw new InvalidOperationException(
+            "The HID interface list changed repeatedly during enumeration.");
     }
 
-    internal static string NormalizeCollectionPath(string path) => CollectionPattern().Replace(path, "", 1);
-    private static bool TryGetHidInfo(nint device, out HidInfo hid)
-    {
-        var info = new RawInputDeviceInfo { Size = (uint)Marshal.SizeOf<RawInputDeviceInfo>() }; uint size = info.Size;
-        if (GetRawInputDeviceInfo(device, RidiDeviceInfo, ref info, ref size) == uint.MaxValue) { hid = default; return false; }
-        hid = info.Hid; return info.Type == RimTypeHid;
-    }
-    private static string GetDeviceName(nint device)
-    {
-        uint length = 0; GetRawInputDeviceInfoName(device, RidiDeviceName, null, ref length);
-        if (length == 0) return string.Empty; var value = new StringBuilder((int)length);
-        return GetRawInputDeviceInfoName(device, RidiDeviceName, value, ref length) == uint.MaxValue ? string.Empty : value.ToString();
-    }
-
-    [GeneratedRegex(@"&COL[0-9A-F]{2}(?=#)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)] private static partial Regex CollectionPattern();
-    [StructLayout(LayoutKind.Sequential)] private struct RawInputDeviceList { public nint Device; public uint Type; }
-    [StructLayout(LayoutKind.Sequential)] private struct HidInfo { public uint VendorId, ProductId, VersionNumber, UsagePage, Usage; }
-    [StructLayout(LayoutKind.Explicit)] private struct RawInputDeviceInfo { [FieldOffset(0)] public uint Size; [FieldOffset(4)] public uint Type; [FieldOffset(8)] public HidInfo Hid; }
-    [DllImport("user32.dll", SetLastError = true)] private static extern uint GetRawInputDeviceList([Out] RawInputDeviceList[]? list, ref uint count, uint size);
-    [DllImport("user32.dll", EntryPoint = "GetRawInputDeviceInfoW", CharSet = CharSet.Unicode, SetLastError = true)] private static extern uint GetRawInputDeviceInfoName(nint device, uint command, StringBuilder? data, ref uint size);
-    [DllImport("user32.dll", EntryPoint = "GetRawInputDeviceInfoW", SetLastError = true)] private static extern uint GetRawInputDeviceInfo(nint device, uint command, ref RawInputDeviceInfo data, ref uint size);
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint CM_Get_Device_Interface_List_SizeW(out uint length,
+        ref Guid interfaceClassGuid, string? deviceId, uint flags);
+    [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint CM_Get_Device_Interface_ListW(ref Guid interfaceClassGuid,
+        string? deviceId, [Out] char[] buffer, uint bufferLength, uint flags);
 }

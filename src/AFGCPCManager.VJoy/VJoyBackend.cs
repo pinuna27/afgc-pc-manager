@@ -12,6 +12,7 @@ public sealed class VJoyBackend : IGamepadOutputBackend
 
     public VJoyBackend() : this(VJoyNativeLibrary.LoadInstalled()) { }
     internal VJoyBackend(IVJoyNativeApi api) => _api = api;
+    public bool IsDriverEnabled { get { ThrowIfDisposed(); return _api.IsEnabled; } }
 
     public IReadOnlyList<OutputDeviceInfo> EnumerateDevices()
     {
@@ -29,6 +30,7 @@ public sealed class VJoyBackend : IGamepadOutputBackend
         if (preferredDeviceId is uint preferred) ids = ids.OrderBy(id => id == preferred ? 0 : 1).ThenBy(id => id);
         foreach (uint id in ids)
         {
+            if (_owned.Contains(id)) continue;
             if (_api.GetStatus(id) != VJoyDeviceStatus.Free || !TryReadCapabilities(id, out var capabilities)) continue;
             if (!_api.Acquire(id)) continue;
             _owned.Add(id);
@@ -42,7 +44,10 @@ public sealed class VJoyBackend : IGamepadOutputBackend
     private OutputDeviceInfo Describe(uint id)
     {
         var native = _api.GetStatus(id);
-        bool compatible = TryReadCapabilities(id, out var capabilities);
+        VirtualGamepadCapabilities? capabilities = null;
+        bool compatible = native is VJoyDeviceStatus.Free or VJoyDeviceStatus.Owned
+            && TryReadCapabilities(id, out capabilities);
+        if (!compatible) capabilities = null;
         return new(id, native switch { VJoyDeviceStatus.Owned => OutputDeviceStatus.Owned, VJoyDeviceStatus.Free => OutputDeviceStatus.Free, VJoyDeviceStatus.Busy => OutputDeviceStatus.Busy, VJoyDeviceStatus.Missing => OutputDeviceStatus.Missing, _ => OutputDeviceStatus.Unknown }, capabilities);
     }
 

@@ -22,6 +22,13 @@ public sealed class DependencyPlanBuilderTests
     }
 
     [Fact]
+    public void EquivalentVersionWithOmittedRevision_IsCurrent()
+    {
+        var plan = DependencyPlanBuilder.Build(new(DependencyId.VJoy, true, new(2, 2, 2)), new(2, 2, 2, 0), JournalWith(installed: ["VJoy"]));
+        Assert.Equal(DependencyAction.None, plan.Action);
+    }
+
+    [Fact]
     public void MissingManagedDependency_IsRepaired()
     {
         InstallationJournal journal = JournalWith(installed: ["VJoy"]);

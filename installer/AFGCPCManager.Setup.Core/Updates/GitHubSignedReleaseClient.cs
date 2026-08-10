@@ -17,14 +17,21 @@ public sealed class GitHubSignedReleaseClient(HttpClient client, ReleaseManifest
         using HttpResponseMessage response = await client.SendAsync(request, cancellationToken); response.EnsureSuccessStatusCode();
         ReleaseResponse release = await response.Content.ReadFromJsonAsync<ReleaseResponse>(cancellationToken: cancellationToken) ?? throw new InvalidDataException("GitHub returned an empty release response.");
         if (release.Draft || release.Prerelease) throw new InvalidDataException("GitHub returned a non-stable release.");
+        if (release.Assets is null || release.Assets.Any(asset => asset is null
+                || string.IsNullOrWhiteSpace(asset.Name) || string.IsNullOrWhiteSpace(asset.BrowserDownloadUrl))
+            || release.Assets.GroupBy(asset => asset.Name, StringComparer.OrdinalIgnoreCase).Any(group => group.Count() > 1))
+            throw new InvalidDataException("GitHub returned an invalid release asset list.");
         if (!TryVersion(release.TagName, out Version? releaseVersion)) throw new InvalidDataException("The GitHub release tag is invalid.");
         Uri releasePage = RequireGitHubUri(release.HtmlUrl); var assets = release.Assets.ToDictionary(x => x.Name, x => RequireGitHubUri(x.BrowserDownloadUrl), StringComparer.OrdinalIgnoreCase);
         if (!assets.TryGetValue("release-manifest.json", out Uri? manifestUri) || !assets.TryGetValue("release-manifest.sig", out Uri? signatureUri)) throw new InvalidDataException("The release is missing its signed manifest.");
         byte[] manifestBytes = await DownloadSmallAsync(manifestUri, MaximumManifestBytes, cancellationToken); byte[] signature = await DownloadSmallAsync(signatureUri, MaximumSignatureBytes, cancellationToken);
         ManifestVerificationResult verified = verifier.Verify(manifestBytes, signature); if (!verified.IsValid) throw new InvalidDataException(verified.FailureReason);
-        if (!TryVersion(verified.Manifest!.Version, out Version? manifestVersion) || manifestVersion != releaseVersion) throw new InvalidDataException("The signed manifest version does not match the GitHub release tag.");
+        if (!TryVersion(verified.Manifest!.Version, out Version? manifestVersion)
+            || DependencyPlanBuilder.IsOlder(manifestVersion!, releaseVersion!)
+            || DependencyPlanBuilder.IsOlder(releaseVersion!, manifestVersion!))
+            throw new InvalidDataException("The signed manifest version does not match the GitHub release tag.");
         foreach (var asset in verified.Manifest.Assets) if (!assets.ContainsKey(asset.Name)) throw new InvalidDataException($"The signed asset '{asset.Name}' is missing from the GitHub release.");
-        return new(releaseVersion!, releasePage, verified.Manifest, assets);
+        return new(releaseVersion!, releasePage, verified.Manifest, assets, manifestBytes, signature);
     }
     public async Task<string> DownloadAssetAsync(VerifiedRelease release, string assetName, string destinationDirectory, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -42,7 +49,13 @@ public sealed class GitHubSignedReleaseClient(HttpClient client, ReleaseManifest
             string hash = await Hashing.Sha256Async(temporary, cancellationToken); if (!hash.Equals(expected.Sha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("The release asset hash does not match its signed manifest.");
             File.Move(temporary, destination, true); return destination;
         }
-        catch { target.Close(); if (File.Exists(temporary)) File.Delete(temporary); throw; }
+        catch
+        {
+            target.Close();
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            throw;
+        }
     }
     public async Task<string> DownloadDependencyAsync(DependencyRelease dependency, string destinationDirectory, IProgress<double>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -51,7 +64,7 @@ public sealed class GitHubSignedReleaseClient(HttpClient client, ReleaseManifest
         ValidateRepositoryPart(repository[0]); ValidateRepositoryPart(repository[1]);
         ValidateRepositoryPart(dependency.ReleaseTag);
         if (Path.GetFileName(dependency.AssetName) != dependency.AssetName) throw new InvalidDataException("The signed dependency asset name is invalid.");
-        if (!Version.TryParse(dependency.Version, out Version? version)) throw new InvalidDataException("The signed dependency version is invalid.");
+        if (!Version.TryParse(dependency.Version.TrimStart('v', 'V'), out Version? version)) throw new InvalidDataException("The signed dependency version is invalid.");
         Uri uri = new($"https://github.com/{repository[0]}/{repository[1]}/releases/download/{dependency.ReleaseTag}/{dependency.AssetName}");
         var entry = new DependencyManifestEntry(repository[1], version, uri, dependency.Sha256,
             dependency.ExpectedPublisher, dependency.AssetName, [], []);
@@ -68,7 +81,7 @@ public sealed class GitHubSignedReleaseClient(HttpClient client, ReleaseManifest
     private static HttpRequestMessage Request(string uri) { var request = new HttpRequestMessage(HttpMethod.Get, uri); request.Headers.UserAgent.Add(new ProductInfoHeaderValue("AFGC-PC-Manager-Setup", "1.0")); request.Headers.Accept.Add(new("application/vnd.github+json")); return request; }
     private static Uri RequireGitHubUri(string value) { if (!Uri.TryCreate(value, UriKind.Absolute, out Uri? uri) || uri.Scheme != Uri.UriSchemeHttps || !uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("GitHub returned an untrusted release URL."); return uri; }
     private static void ValidateRepositoryPart(string value) { if (string.IsNullOrWhiteSpace(value) || value.Any(ch => !(char.IsLetterOrDigit(ch) || ch is '-' or '_' or '.'))) throw new ArgumentException("The repository identity is invalid."); }
-    private static bool TryVersion(string value, out Version? version) { version = null; string clean = value.Trim(); if (clean.StartsWith('v') || clean.StartsWith('V')) clean = clean[1..]; return clean.All(ch => char.IsDigit(ch) || ch == '.') && Version.TryParse(clean, out version); }
+    private static bool TryVersion(string value, out Version? version) { version = null; if (string.IsNullOrWhiteSpace(value)) return false; string clean = value.Trim(); if (clean.StartsWith('v') || clean.StartsWith('V')) clean = clean[1..]; return clean.All(ch => char.IsDigit(ch) || ch == '.') && Version.TryParse(clean, out version); }
     private sealed record ReleaseResponse([property: JsonPropertyName("tag_name")] string TagName, [property: JsonPropertyName("html_url")] string HtmlUrl, [property: JsonPropertyName("draft")] bool Draft, [property: JsonPropertyName("prerelease")] bool Prerelease, [property: JsonPropertyName("assets")] List<AssetResponse> Assets);
     private sealed record AssetResponse([property: JsonPropertyName("name")] string Name, [property: JsonPropertyName("browser_download_url")] string BrowserDownloadUrl);
 }
