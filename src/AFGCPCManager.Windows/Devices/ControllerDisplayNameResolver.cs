@@ -6,7 +6,7 @@ namespace AFGCPCManager.Windows.Devices;
 
 internal static class ControllerDisplayNameResolver
 {
-    private const int MaximumParentDepth = 3;
+    private const int MaximumParentDepth = 8;
     private const uint CrSuccess = 0, CrBufferSmall = 0x1a, DevPropTypeString = 0x12;
     private static readonly DevPropKey DeviceInstanceId = new(
         new("78c34fc8-104a-4aca-9ea4-524d52996e57"), 256);
@@ -18,6 +18,7 @@ internal static class ControllerDisplayNameResolver
     private static readonly string[] GenericNameFragments =
     [
         "HID-compliant",
+        "HID Gamepad",
         "Bluetooth HID Device",
         "Bluetooth Device (RFCOMM",
         "Bluetooth LE Generic Attribute",

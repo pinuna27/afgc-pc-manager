@@ -107,6 +107,7 @@ public sealed class FireControllerDiscoveryTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("HID-compliant game controller")]
+    [InlineData("HID Gamepad")]
     [InlineData("Bluetooth HID Device")]
     public void SnapshotFallsBackWhenDiscoveredNameIsMissingOrGeneric(string? displayName)
     {

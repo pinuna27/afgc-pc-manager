@@ -24,6 +24,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     private readonly HashSet<string> _hiddenControllers = new(StringComparer.Ordinal);
     private readonly ControllerReconnectGate _reconnectGate = new();
     private readonly ControllerIdentificationLightManager _identificationLights = new();
+    private readonly VJoyDirectInputNameManager _vjoyDisplayName = new();
     private readonly IFireControllerDiscovery _discovery = new FireControllerDiscovery();
     private readonly ISettingsStore _settingsStore = new JsonSettingsStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "settings.json"));
     private readonly HidHideService _hidHide = new(new DeviceInstanceResolver(), new HidHideJournalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "hidhide-journal.json")));
@@ -168,6 +169,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
 
         _backend = initialized.Backend;
         _compatibleVJoyDevices = initialized.Compatible;
+        SynchronizeVJoyDisplayName(_registry!.Snapshot);
         try { _hidingAvailability = _hidHide.GetAvailability(); }
         catch { _hidingAvailability = HidHideAvailability.NotOperational; }
         PublishControllers();
@@ -350,6 +352,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                 _controllerIssues.Remove(device.Identity.StableId);
             }
             SetStatus(setupRequired ? "Setup required." : ConnectedDiscoveryCount == 0 ? "Waiting for an Amazon Fire Game Controller..." : $"Running — {_controllers.Count} of {ConnectedDiscoveryCount} Fire controller(s) mapped.");
+            SynchronizeVJoyDisplayName(_registry.Snapshot);
             PublishControllers();
         }
         finally { _mutation.Release(); }
@@ -521,6 +524,19 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             && string.Equals(existing, message, StringComparison.Ordinal)) return;
         _controllerIssues[stableControllerId] = message;
         RecordEvent(message);
+    }
+    private void SynchronizeVJoyDisplayName(SettingsDocument settings)
+    {
+        try
+        {
+            VJoyDisplayNameUpdate? update = _vjoyDisplayName.Synchronize(settings.Controllers);
+            if (update?.Changed == true)
+                RecordEvent($"Renamed the shared vJoy DirectInput device to '{update.Name}'.");
+        }
+        catch (Exception ex)
+        {
+            RecordEvent($"The vJoy DirectInput display name could not be updated: {ex.Message}");
+        }
     }
     public async ValueTask DisposeAsync()
     {
