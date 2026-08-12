@@ -71,7 +71,7 @@ internal sealed class SetupWizardForm : Form
         _page = WizardPage.Welcome;
         _content.Controls.Clear();
         _heading.Text = OperationTitle();
-        _description.Text = "Setup checks the app, vJoy, and HidHide and changes only the components that need attention.";
+        _description.Text = "Setup checks the app, vJoy, ViGEmBus, and HidHide and changes only the components that need attention.";
         _destination.Text = Get(_originalArgs, "--install-dir")
             ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "AFGC PC Manager");

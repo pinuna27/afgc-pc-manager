@@ -45,6 +45,35 @@ public static class UiTheme
         form.ForeColor = Text;
         form.Icon = AfgcIcon.CreateIcon();
         form.StartPosition = centerParent ? FormStartPosition.CenterParent : FormStartPosition.CenterScreen;
+
+        // WinForms scales code-created ClientSize and MinimumSize values when
+        // the handle is created. At 200% scaling, a 940 x 590 design can become
+        // larger than a 1440 x 900 display. Clamp only after DPI scaling has
+        // happened, and repeat if the window moves to a monitor with a different
+        // DPI or working area.
+        form.Shown += (_, _) => FitToWorkingArea(form);
+        form.DpiChanged += (_, _) => form.BeginInvoke(() => FitToWorkingArea(form));
+    }
+
+    public static void FitToWorkingArea(Form form)
+    {
+        if (form.IsDisposed || form.WindowState != FormWindowState.Normal) return;
+        Rectangle workingArea = Screen.FromControl(form).WorkingArea;
+        int margin = Scale(form, 12);
+        int maximumWidth = Math.Max(320, workingArea.Width - (margin * 2));
+        int maximumHeight = Math.Max(240, workingArea.Height - (margin * 2));
+
+        if (form.MinimumSize.Width > maximumWidth || form.MinimumSize.Height > maximumHeight)
+            form.MinimumSize = new Size(
+                Math.Min(form.MinimumSize.Width, maximumWidth),
+                Math.Min(form.MinimumSize.Height, maximumHeight));
+
+        form.Size = new Size(
+            Math.Min(form.Width, maximumWidth),
+            Math.Min(form.Height, maximumHeight));
+        form.Location = new Point(
+            workingArea.Left + Math.Max(0, (workingArea.Width - form.Width) / 2),
+            workingArea.Top + Math.Max(0, (workingArea.Height - form.Height) / 2));
     }
 
     public static Label Heading(string text, bool dialog = false) => new()

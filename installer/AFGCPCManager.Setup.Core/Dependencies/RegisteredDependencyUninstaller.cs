@@ -46,6 +46,8 @@ public sealed class RegisteredDependencyUninstaller : IRegisteredDependencyUnins
     {
         DependencyId.VJoy => displayName.Equals("vJoy", StringComparison.OrdinalIgnoreCase)
             || displayName.Contains("vJoy Device Driver", StringComparison.OrdinalIgnoreCase),
+        DependencyId.ViGEmBus => displayName.Contains("ViGEm Bus Driver", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Virtual Gamepad Emulation Bus Driver", StringComparison.OrdinalIgnoreCase),
         DependencyId.HidHide => displayName.Contains("HidHide", StringComparison.OrdinalIgnoreCase),
         _ => false
     };

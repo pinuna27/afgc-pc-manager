@@ -40,6 +40,7 @@ internal static class Program
                     "--wizard-run", DetachedArgument, root, BootstrapTempArgument, temporaryDirectory
                 };
                 if (form.Options.UninstallVJoy) elevatedArguments.Add("--remove-vjoy");
+                if (form.Options.UninstallViGEmBus) elevatedArguments.Add("--remove-vigembus");
                 if (form.Options.UninstallHidHide) elevatedArguments.Add("--remove-hidhide");
                 try
                 {
@@ -72,8 +73,9 @@ internal static class Program
             string detachedRoot = Get(args, DetachedArgument) ?? throw new ArgumentException("The installed application path is missing.");
             var continuationArguments = args.ToList();
             bool removeVJoy = Has(args, "--remove-vjoy");
+            bool removeViGEmBus = Has(args, "--remove-vigembus");
             bool removeHidHide = Has(args, "--remove-hidhide");
-            string? continuationExecutable = removeVJoy || removeHidHide
+            string? continuationExecutable = removeVJoy || removeViGEmBus || removeHidHide
                 ? EnsureDurableContinuationCopy()
                 : null;
             string application = Path.Combine(detachedRoot, "AFGCPCManager.exe");
@@ -100,6 +102,15 @@ internal static class Program
                 Report("Removing vJoy... Follow the vendor uninstaller prompts.", progress);
                 DependencyRemovalExecutionResult removal = await removalCoordinator.RemoveAsync(
                     DependencyId.VJoy, continuationArguments);
+                restartRequired |= removal.RestartRequired;
+                continuationArguments = removal.ContinuationArguments;
+                if (removal.RestartInitiated) return 3010;
+            }
+            if (removeViGEmBus)
+            {
+                Report("Removing ViGEmBus... Follow the vendor uninstaller prompts.", progress);
+                DependencyRemovalExecutionResult removal = await removalCoordinator.RemoveAsync(
+                    DependencyId.ViGEmBus, continuationArguments);
                 restartRequired |= removal.RestartRequired;
                 continuationArguments = removal.ContinuationArguments;
                 if (removal.RestartInitiated) return 3010;

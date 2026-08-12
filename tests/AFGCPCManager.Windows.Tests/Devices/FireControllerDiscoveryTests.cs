@@ -144,6 +144,29 @@ public sealed class FireControllerDiscoveryTests
     }
 
     [Theory]
+    [InlineData(@"HID\{00001124-0000-1000-8000-00805F9B34FB}_VID&00021949_PID&0402&COL01\8&153F8146&1&0000", null, true)]
+    [InlineData(@"BTHENUM\{00001124-0000-1000-8000-00805F9B34FB}_VID&00021949_PID&0402\7&22C3C290&0&A002DCF1857E_C00000000", "A002DCF1857E", true)]
+    [InlineData(@"BTHENUM\DEV_A002DCF1857E\7&22C3C290&0&BLUETOOTHDEVICE_A002DCF1857E", "A002DCF1857E", true)]
+    [InlineData(@"BTH\MS_BTHBRB\6&2603A294&0&1", "A002DCF1857E", false)]
+    [InlineData(@"PCI\VEN_8086&DEV_7E7D&SUBSYS_201F1043&REV_20\3&11583659&0&A0", "A002DCF1857E", false)]
+    public void ControllerNameLookupStopsAtDeviceIdentityBoundary(
+        string instanceId, string? serialNumber, bool expected)
+    {
+        Assert.Equal(expected,
+            ControllerDisplayNameResolver.IsControllerDeviceNode(instanceId, serialNumber));
+    }
+
+    [Fact]
+    public void DifferentBluetoothDeviceCannotNameController()
+    {
+        const string otherDevice =
+            @"BTHENUM\DEV_A002DCF1857F\7&22C3C290&0&BLUETOOTHDEVICE_A002DCF1857F";
+
+        Assert.False(ControllerDisplayNameResolver.IsControllerDeviceNode(
+            otherDevice, "A002DCF1857E"));
+    }
+
+    [Theory]
     [InlineData(@"BTHENUM\{00001124-0000-1000-8000-00805F9B34FB}_VID&00021949_PID&0402\7&22C3C290&0&A002DCF1857E_C00000000")]
     [InlineData(@"BTHENUM\DEV_A002DCF1857E\7&22C3C290&0&BLUETOOTHDEVICE_A002DCF1857E")]
     public void BluetoothParentInstanceProvidesStableHardwareAddress(string instanceId)

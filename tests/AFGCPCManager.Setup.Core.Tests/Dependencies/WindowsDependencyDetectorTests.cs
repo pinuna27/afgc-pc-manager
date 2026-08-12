@@ -42,6 +42,23 @@ public sealed class WindowsDependencyDetectorTests
         Assert.Equal(DependencyReadiness.Unknown, readiness);
     }
 
+    [Fact]
+    public void ViGEmRegistrationAndDriverServiceAreReadyWithoutAnApiProbe()
+    {
+        DependencyEvidence[] evidence =
+        [
+            new("registered application", true, new Version(1, 22)),
+            new("driver service", true, Detail: "ViGEmBus")
+        ];
+
+        MethodInfo determine = typeof(WindowsDependencyDetector).GetMethod("DetermineReadiness",
+            BindingFlags.Static | BindingFlags.NonPublic)!;
+        DependencyReadiness readiness = (DependencyReadiness)determine.Invoke(null,
+            [DependencyId.ViGEmBus, evidence, null, false, false])!;
+
+        Assert.Equal(DependencyReadiness.Ready, readiness);
+    }
+
     [Theory]
     [InlineData("0.0.0", null)]
     [InlineData("0.0.0.0", null)]
@@ -56,6 +73,9 @@ public sealed class WindowsDependencyDetectorTests
     [Theory]
     [InlineData(DependencyId.VJoy, "vJoy Device Driver 2.2.2", true)]
     [InlineData(DependencyId.VJoy, "Third-party vJoy Feeder", false)]
+    [InlineData(DependencyId.ViGEmBus, "Nefarius Virtual Gamepad Emulation Bus Driver", true)]
+    [InlineData(DependencyId.ViGEmBus, "ViGEm Bus Driver", true)]
+    [InlineData(DependencyId.ViGEmBus, "ViGEm Client SDK", false)]
     [InlineData(DependencyId.HidHide, "Nefarius HidHide", true)]
     public void MatchesOnlyDriverInstallations(DependencyId dependency, string displayName, bool expected)
     {

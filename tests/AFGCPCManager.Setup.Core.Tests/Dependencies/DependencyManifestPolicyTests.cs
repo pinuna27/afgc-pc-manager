@@ -12,6 +12,8 @@ public sealed class DependencyManifestPolicyTests
         {
             new DependencyState(DependencyId.VJoy, true,
                 Readiness: DependencyReadiness.Ready),
+            new DependencyState(DependencyId.ViGEmBus, true,
+                Readiness: DependencyReadiness.Ready),
             new DependencyState(DependencyId.HidHide, true,
                 Readiness: DependencyReadiness.Ready)
         };
@@ -31,6 +33,8 @@ public sealed class DependencyManifestPolicyTests
         {
             new DependencyState(DependencyId.VJoy, readiness != DependencyReadiness.Absent,
                 Readiness: readiness),
+            new DependencyState(DependencyId.ViGEmBus, true,
+                Readiness: DependencyReadiness.Ready),
             new DependencyState(DependencyId.HidHide, true,
                 Readiness: DependencyReadiness.Ready)
         };

@@ -1,3 +1,5 @@
+using AFGCPCManager.Core.Settings;
+using AFGCPCManager.Core.Updates;
 using AFGCPCManager.UI;
 
 namespace AFGCPCManager.App;
@@ -21,6 +23,11 @@ internal sealed class MainForm : Form
         Text = "No controllers are registered yet.\n\nConnect a Fire controller, then choose Add controller."
     };
     private readonly Label _controllerCount = UiTheme.Body("0 registered", muted: true);
+    private readonly AfgcButton _update = new("Update available", AfgcButtonKind.Primary)
+    {
+        Visible = false
+    };
+    private UpdateCheckResult.Available? _managerUpdate;
 
     public MainForm(BridgeRuntime runtime)
     {
@@ -36,10 +43,12 @@ internal sealed class MainForm : Form
         var settings = new AfgcButton("Settings");
         settings.Click += async (_, _) => await RunUiActionAsync(
             () => OpenSettingsAsync(null), "save settings");
+        _update.Click += (_, _) => StartManagerUpdate();
+        _runtime.UpdatesAvailable += OnUpdatesAvailable;
         Panel header = UiTheme.FormHeader(
             "AFGC PC Manager",
             "Amazon Fire controller bridge",
-            UiTheme.ButtonRow(add, settings));
+            UiTheme.ButtonRow(add, settings, _update));
 
         var cardHeading = UiTheme.SectionHeading("Controllers");
         var cardHeader = new TableLayoutPanel
@@ -99,6 +108,13 @@ internal sealed class MainForm : Form
             async (_, _) => await RunUiActionAsync(RemoveSelectedAsync, "remove the controller"));
         _controllers.ContextMenuStrip = rowMenu;
         rowMenu.Opening += (_, e) => e.Cancel = SelectedId is null;
+        _controllers.CellMouseDown += (_, e) =>
+        {
+            if (e.Button != MouseButtons.Right || e.RowIndex < 0) return;
+            _controllers.ClearSelection();
+            _controllers.Rows[e.RowIndex].Selected = true;
+            _controllers.CurrentCell = _controllers.Rows[e.RowIndex].Cells[0];
+        };
         _controllers.CellDoubleClick += async (_, e) =>
         {
             if (e.RowIndex >= 0)
@@ -124,7 +140,7 @@ internal sealed class MainForm : Form
             Name = "Controller",
             HeaderText = "CONTROLLER",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 42,
+            FillWeight = 50,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -133,7 +149,7 @@ internal sealed class MainForm : Form
             HeaderText = "LIGHTS",
             ToolTipText = $"{IdentificationLightDisplay.OnGlyph} = light on    {IdentificationLightDisplay.OffGlyph} = light off",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 17,
+            FillWeight = 13,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -141,7 +157,7 @@ internal sealed class MainForm : Form
             Name = "Status",
             HeaderText = "STATUS",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 25,
+            FillWeight = 22,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -149,7 +165,8 @@ internal sealed class MainForm : Form
             Name = "Output",
             HeaderText = "OUTPUT",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 16,
+            FillWeight = 15,
+            MinimumWidth = 100,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
     }
@@ -180,19 +197,31 @@ internal sealed class MainForm : Form
             return;
         }
 
+        string? selectedId = SelectedId;
+        int selectedIndex = -1;
         _controllers.Rows.Clear();
         foreach (ControllerRowModel row in rows)
         {
             string state = row.IsConnected
-                ? row.Issue ?? (row.VJoyDeviceId is null ? "Needs vJoy" : "Connected")
+                ? row.Issue ?? (row.OutputDeviceId is null
+                    ? row.OutputMode == GamepadOutputMode.XInput
+                        ? "Needs ViGEmBus"
+                        : "Needs vJoy"
+                    : "Connected")
                 : "Disconnected";
             int index = _controllers.Rows.Add(
-                $"Controller {row.RegistrationOrder}  ·  {row.DisplayName}",
+                $"Controller {row.RegistrationOrder}  ·  " +
+                VirtualControllerDisplayName.Format(row.DisplayName, row.OutputMode),
                 IdentificationLightDisplay.Format(row.IdentificationLightMask),
                 state,
-                row.VJoyDeviceId is uint id ? $"vJoy {id}" : "Not assigned");
+                row.OutputDeviceId is uint id
+                    ? row.OutputMode == GamepadOutputMode.XInput
+                        ? $"Xbox output {id}"
+                        : $"vJoy {id}"
+                    : "Not assigned");
             DataGridViewRow gridRow = _controllers.Rows[index];
             gridRow.Tag = row.StableId;
+            if (row.StableId == selectedId) selectedIndex = index;
             gridRow.Cells[1].Style.ForeColor = row.IdentificationLightMask is null
                 ? UiTheme.TextMuted : UiTheme.Primary;
             gridRow.Cells[2].Style.ForeColor = row.Issue is not null
@@ -202,6 +231,11 @@ internal sealed class MainForm : Form
         }
         bool hasRows = rows.Count > 0;
         _controllers.ClearSelection();
+        if (selectedIndex >= 0)
+        {
+            _controllers.Rows[selectedIndex].Selected = true;
+            _controllers.CurrentCell = _controllers.Rows[selectedIndex].Cells[0];
+        }
         _controllers.Visible = hasRows;
         _emptyState.Visible = !hasRows;
         _controllerCount.Text = rows.Count == 1 ? "1 registered" : $"{rows.Count} registered";
@@ -232,6 +266,45 @@ internal sealed class MainForm : Form
             _runtime.GetSettings(), controllerId, _runtime.GetDiagnostics);
         if (dialog.ShowDialog(this) == DialogResult.OK && dialog.Result is not null)
             await _runtime.SaveSettingsAsync(dialog.Result);
+    }
+
+    private void OnUpdatesAvailable(object? sender,
+        IReadOnlyList<UpdateCheckResult.Available> updates)
+    {
+        UpdateCheckResult.Available? manager = updates.FirstOrDefault(
+            update => update.Component == ReleaseComponent.AfgcPcManager);
+        if (manager is null) return;
+        if (InvokeRequired)
+        {
+            try { BeginInvoke(() => ShowManagerUpdate(manager)); }
+            catch (InvalidOperationException) { }
+            return;
+        }
+        ShowManagerUpdate(manager);
+    }
+
+    private void ShowManagerUpdate(UpdateCheckResult.Available update)
+    {
+        _managerUpdate = update;
+        _update.Text = $"Update to {update.Latest}";
+        _update.Visible = true;
+    }
+
+    private void StartManagerUpdate()
+    {
+        if (_managerUpdate is null) return;
+        try
+        {
+            ManagerUpdateLauncher.PromptAndStart(this, _managerUpdate,
+                AppContext.BaseDirectory);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"The update could not be started.\n\n{ex.Message}\n\n" +
+                $"You can download it manually from:\n{_managerUpdate.ReleasePage}",
+                "AFGC PC Manager", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     private async Task RunUiActionAsync(Func<Task> action, string operation)

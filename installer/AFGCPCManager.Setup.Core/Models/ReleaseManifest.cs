@@ -8,6 +8,7 @@ public sealed record ReleaseManifest
     public required DateTimeOffset PublishedAtUtc { get; init; }
     public required List<ReleaseAsset> Assets { get; init; }
     public DependencyRelease? VJoy { get; init; }
+    public DependencyRelease? ViGEmBus { get; init; }
     public DependencyRelease? HidHide { get; init; }
 }
 public sealed record ReleaseAsset(string Name, string Sha256, long Size);

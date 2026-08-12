@@ -36,6 +36,12 @@ $vjoy = $pnpDevices | Where-Object {
 }
 Add-Check 'vJoy device present' ($null -ne $vjoy) $(if ($vjoy) { ($vjoy.FriendlyName -join ', ') } else { 'No present vJoy device found.' })
 
+$viGEmBus = $pnpDevices | Where-Object {
+    $_.FriendlyName -match 'ViGEm|Virtual Gamepad Emulation Bus' -or
+    $_.InstanceId -match 'ROOT\\VIGEMBUS'
+}
+Add-Check 'ViGEmBus device present' ($null -ne $viGEmBus) $(if ($viGEmBus) { ($viGEmBus.FriendlyName -join ', ') } else { 'No present ViGEmBus device found.' })
+
 $hidHide = Get-Service -Name 'HidHide' -ErrorAction SilentlyContinue
 Add-Check 'HidHide service present' ($null -ne $hidHide) $(if ($hidHide) { "Status: $($hidHide.Status)" } else { 'HidHide service not found.' })
 Add-Check 'HidHide service running' ($null -ne $hidHide -and $hidHide.Status -eq 'Running') $(if ($hidHide) { "Status: $($hidHide.Status)" } else { 'HidHide service not found.' })

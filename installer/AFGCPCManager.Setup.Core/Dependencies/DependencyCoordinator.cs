@@ -81,7 +81,7 @@ public sealed class DependencyCoordinator(
                 || (allowUpdates && plan.Action == DependencyAction.Update);
             if (!execute) continue;
 
-            string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
+            string name = DependencyNames.DisplayName(id);
             progress?.Invoke(plan.Action switch
             {
                 DependencyAction.Install => $"Installing {name}... Follow the installer prompts.",
@@ -118,7 +118,7 @@ public sealed class DependencyCoordinator(
                 progress?.Invoke($"{name} installed successfully and requires a Windows restart.");
             }
 
-            // Both dependencies are kernel drivers. Even when a vendor installer returns
+            // These dependencies are kernel drivers. Even when a vendor installer returns
             // success without a reboot code, defer provisioning until Windows has rebooted.
             result = result with { RestartRequired = true };
 
@@ -148,7 +148,7 @@ public sealed class DependencyCoordinator(
 
     private static string BuildResumeFailure(DependencyId id, DependencyState state)
     {
-        string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
+        string name = DependencyNames.DisplayName(id);
         string evidence = state.Evidence is { Count: > 0 }
             ? " Detected evidence: " + string.Join("; ", state.Evidence.Select(item =>
                 $"{item.Source}={(item.Present is null ? "unknown" : item.Present.Value ? "present" : "absent")}")) + "."

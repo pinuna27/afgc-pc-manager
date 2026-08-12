@@ -246,7 +246,7 @@ internal static class Program
         "add" => AddPreview(),
         "add-empty" => new AddControllerForm([]),
         "setup" => new SetupWizardForm([]),
-        "uninstall" => new UninstallForm(new DependencyUninstallOptions(false, false)),
+        "uninstall" => new UninstallForm(new DependencyUninstallOptions(false, false, false)),
         "uninstall-progress" => new UninstallProgressForm([], FakeUninstallAsync),
         _ => throw new ArgumentException($"Unknown UI surface '{surface}'.")
     };

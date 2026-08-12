@@ -33,7 +33,7 @@ public sealed class WindowsDependencyDetector(Func<DependencyId, DependencyProbe
                 location ??= result.Path;
             });
         }
-        else
+        else if (dependency == DependencyId.HidHide)
         {
             TryCollect("vendor registration", FindHidHideVendorRegistration, result =>
             {
@@ -94,7 +94,12 @@ public sealed class WindowsDependencyDetector(Func<DependencyId, DependencyProbe
         if (probe is { Installed: true, Operational: false }) return DependencyReadiness.Unhealthy;
         if (probe is { Installed: false } && anyPresent) return DependencyReadiness.Unhealthy;
         if (operationalProbeFailed) return DependencyReadiness.Unknown;
-        if (dependency == DependencyId.VJoy && HasEvidence(evidence, "runtime library") && HasEvidence(evidence, "driver service"))
+        if (dependency == DependencyId.VJoy && HasEvidence(evidence, "runtime library")
+            && HasEvidence(evidence, "driver service"))
+            return DependencyReadiness.Ready;
+        if (dependency == DependencyId.ViGEmBus
+            && HasEvidence(evidence, "registered application")
+            && HasEvidence(evidence, "driver service"))
             return DependencyReadiness.Ready;
         if (anyPresent) return DependencyReadiness.Unhealthy;
         if (queryFailed || !allReliablyAbsent) return DependencyReadiness.Unknown;
@@ -130,13 +135,21 @@ public sealed class WindowsDependencyDetector(Func<DependencyId, DependencyProbe
     {
         DependencyId.VJoy => displayName.Equals("vJoy", StringComparison.OrdinalIgnoreCase)
             || displayName.Contains("vJoy Device Driver", StringComparison.OrdinalIgnoreCase),
+        DependencyId.ViGEmBus => displayName.Contains("ViGEm Bus Driver", StringComparison.OrdinalIgnoreCase)
+            || displayName.Contains("Virtual Gamepad Emulation Bus Driver", StringComparison.OrdinalIgnoreCase),
         DependencyId.HidHide => displayName.Contains("HidHide", StringComparison.OrdinalIgnoreCase),
         _ => false
     };
 
     private static (bool Present, string? Detail) FindDriverService(DependencyId dependency)
     {
-        string token = dependency == DependencyId.VJoy ? "vjoy" : "hidhide";
+        string token = dependency switch
+        {
+            DependencyId.VJoy => "vjoy",
+            DependencyId.ViGEmBus => "vigembus",
+            DependencyId.HidHide => "hidhide",
+            _ => throw new ArgumentOutOfRangeException(nameof(dependency))
+        };
         using RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using RegistryKey? services = machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services");
         if (services is null) return (false, null);

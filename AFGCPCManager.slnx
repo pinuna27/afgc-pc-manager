@@ -11,6 +11,7 @@
     <Project Path="src/AFGCPCManager.HidVisibilityProbe/AFGCPCManager.HidVisibilityProbe.csproj" />
     <Project Path="src/AFGCPCManager.UI/AFGCPCManager.UI.csproj" />
     <Project Path="src/AFGCPCManager.VJoy/AFGCPCManager.VJoy.csproj" />
+    <Project Path="src/AFGCPCManager.ViGEm/AFGCPCManager.ViGEm.csproj" />
     <Project Path="src/AFGCPCManager.Windows/AFGCPCManager.Windows.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -20,6 +21,7 @@
     <Project Path="tests/AFGCPCManager.HidVisibilityProbe.Tests/AFGCPCManager.HidVisibilityProbe.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.Setup.Core.Tests/AFGCPCManager.Setup.Core.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.VJoy.Tests/AFGCPCManager.VJoy.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.ViGEm.Tests/AFGCPCManager.ViGEm.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.Windows.Tests/AFGCPCManager.Windows.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">

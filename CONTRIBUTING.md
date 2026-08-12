@@ -7,7 +7,8 @@ documentation corrections, and focused pull requests are welcome.
 
 - Search existing issues first.
 - State the controller revision and Windows version when relevant.
-- Describe whether vJoy and HidHide were already installed.
+- Describe the selected output mode and whether vJoy, ViGEmBus, and HidHide
+  were already installed.
 - Remove Bluetooth addresses, device instance IDs, usernames, and local paths
   from logs or captures.
 

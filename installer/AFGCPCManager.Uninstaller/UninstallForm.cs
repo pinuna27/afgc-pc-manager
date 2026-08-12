@@ -15,9 +15,14 @@ internal sealed class UninstallForm : Form
         Text = "Also uninstall HidHide",
         AutoSize = true
     };
+    private readonly CheckBox _viGEmBus = new()
+    {
+        Text = "Also uninstall ViGEmBus",
+        AutoSize = true
+    };
 
     public DependencyUninstallOptions Options =>
-        new(_vjoy.Checked, _hidHide.Checked);
+        new(_vjoy.Checked, _viGEmBus.Checked, _hidHide.Checked);
 
     public UninstallForm(DependencyUninstallOptions defaults)
     {
@@ -25,6 +30,7 @@ internal sealed class UninstallForm : Form
         ClientSize = new Size(680, 500);
         MinimumSize = new Size(590, 430);
         _vjoy.Checked = defaults.UninstallVJoy;
+        _viGEmBus.Checked = defaults.UninstallViGEmBus;
         _hidHide.Checked = defaults.UninstallHidHide;
 
         var remove = new AfgcButton("Uninstall", AfgcButtonKind.Danger)
@@ -55,12 +61,14 @@ internal sealed class UninstallForm : Form
             Margin = Padding.Empty
         };
         _vjoy.Margin = new Padding(0, 6, 0, 6);
+        _viGEmBus.Margin = new Padding(0, 6, 0, 6);
         _hidHide.Margin = new Padding(0, 6, 0, 14);
         dependencies.Controls.Add(_vjoy);
+        dependencies.Controls.Add(_viGEmBus);
         dependencies.Controls.Add(_hidHide);
 
         var warning = new AfgcCallout(
-            "vJoy and HidHide may be used by other controller software. Leave them unchecked unless you know they are no longer needed.",
+            "vJoy, ViGEmBus, and HidHide may be used by other controller software. Leave them unchecked unless you know they are no longer needed.",
             AfgcCalloutTone.Warning)
         {
             Dock = DockStyle.Top,

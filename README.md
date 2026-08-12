@@ -5,7 +5,7 @@ Fire TV Game Controller (2014, 1st gen). The controller appears in Windows
 Bluetooth as **Amazon Fire Game Controller**. AFGC PC Manager reads its complete
 Bluetooth HID reports—including the analog triggers that some Windows
 game-controller paths miss—and exposes a conventional, remapped controller
-through vJoy.
+as either an Xbox (XInput) or vJoy (DirectInput) device.
 
 > [!WARNING]
 > This project is under active development. There is not yet a supported public
@@ -29,14 +29,18 @@ expects a normal Windows game controller.
 - Discover paired Amazon Fire Game Controllers automatically.
 - Decode gamepad, media, Home, and Game Circle inputs.
 - Preserve the measured stick centers and scale the full trigger ranges.
-- Present an Xbox-style control layout through compatible vJoy devices.
+- Let the user choose native Xbox (XInput) output through ViGEmBus (up to four
+  controllers) or vJoy (DirectInput) output for larger controller counts.
 - Optionally use HidHide to prevent duplicate input from the physical device.
 - Optionally assign stable four-LED identification patterns and show the same
   patterns in the controller list; when disabled, the app sends no LED reports.
 - Support per-controller mappings and multiple controllers without taking vJoy
   devices already owned by other feeder applications.
-- Manage stable application, vJoy, and HidHide updates while preserving
+- Manage stable application, vJoy, ViGEmBus, and HidHide updates while preserving
   dependencies that were installed independently.
+- Offer verified, one-click Manager updates from the persistent main-window button
+  or the Windows update notification. The bundled setup downloads only releases
+  covered by the project's signed release manifest, then closes and reopens the app.
 
 ## Requirements
 
@@ -44,6 +48,7 @@ expects a normal Windows game controller.
 - Bluetooth
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for development
 - [vJoy](https://github.com/BrunnerInnovation/vJoy) for virtual controller output
+- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for Xbox (XInput) output
 - [HidHide](https://github.com/nefarius/HidHide) for optional duplicate-input suppression
 
 The finished installer is designed to acquire verified, pinned dependency
@@ -63,7 +68,7 @@ The solution can be opened directly in JetBrains Rider or Visual Studio.
 ## Repository layout
 
 - `src/` — application, shared UI system, controller logic, Windows transport,
-  vJoy, and HidHide
+  vJoy, ViGEm, and HidHide
 - `installer/` — bootstrapper, uninstaller, verification, and installation logic
 - `tests/` — hardware-independent unit tests
 - `tools/` — controller capture/probe and release-signing utilities

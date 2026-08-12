@@ -104,6 +104,20 @@ public sealed class ControllerRegistry(SettingsDocument initial)
         }
     }
 
+    public bool SetPreferredXInputSlot(string stableId, uint? slot)
+    {
+        if (slot is 0 or > 4) throw new ArgumentOutOfRangeException(nameof(slot));
+        lock (_gate)
+        {
+            int index = _document.Controllers.FindIndex(x => x.StableId == stableId);
+            if (index < 0) return false;
+            var controllers = _document.Controllers.ToList();
+            controllers[index] = controllers[index] with { PreferredXInputSlot = slot };
+            _document = _document with { Controllers = controllers };
+            return true;
+        }
+    }
+
     public ControllerMappingProfile GetEffectiveMapping(string stableId)
     {
         lock (_gate) return EffectiveMappingResolver.Resolve(_document.DefaultMapping, _document.Overrides.GetValueOrDefault(stableId));

@@ -5,6 +5,7 @@ using AFGCPCManager.Setup.Core.Models;
 using AFGCPCManager.Setup.Core.Security;
 using AFGCPCManager.Setup.Core.Updates;
 using AFGCPCManager.VJoy;
+using AFGCPCManager.ViGEm;
 using AFGCPCManager.HidHide;
 using System.Runtime.InteropServices;
 
@@ -14,6 +15,7 @@ internal static class Program
 {
     private const string SetupAsset = "AFGCPCManager-Setup-x64.exe", PayloadAsset = "AFGCPCManager-x64.zip";
     private const string InternalVJoyProbeArgument = "--internal-vjoy-probe";
+    private const string InternalViGEmProbeArgument = "--internal-vigembus-probe";
     private const string InternalVJoyProvisionArgument = "--internal-vjoy-provision";
     internal static Action<string>? Progress { get; set; }
     internal static string? LastError { get; private set; }
@@ -26,6 +28,9 @@ internal static class Program
         if (args.Length == 1 && args[0].Equals(
                 InternalVJoyProbeArgument, StringComparison.OrdinalIgnoreCase))
             return ExitAfterVJoyUse(RunInternalVJoyProbe());
+        if (args.Length == 1 && args[0].Equals(
+                InternalViGEmProbeArgument, StringComparison.OrdinalIgnoreCase))
+            return ExitAfterVJoyUse(RunInternalViGEmProbe());
         if (args.Length == 2 && args[0].Equals(
                 InternalVJoyProvisionArgument, StringComparison.OrdinalIgnoreCase)
             && int.TryParse(args[1], out int requiredVJoyDevices))
@@ -247,8 +252,9 @@ internal static class Program
                 HidHideDependencyStatus status = HidHideDependencyProbe.Detect();
                 return new(status.Installed, status.Operational, status.Version);
             }
-
-            return ProbeVJoyOutOfProcess();
+            return id == DependencyId.VJoy
+                ? ProbeVJoyOutOfProcess()
+                : ProbeViGEmOutOfProcess();
         });
         DependencyState[] installedStates = Enum.GetValues<DependencyId>()
             .Select(detector.Detect).ToArray();
@@ -256,7 +262,7 @@ internal static class Program
             && DependencyManifestPolicy.CanUseInstalledDependenciesWithoutManifest(
                 installedStates, journal))
         {
-            Report("Found operational vJoy and HidHide installations; no dependency download is needed.");
+            Report("Found operational vJoy, ViGEmBus, and HidHide installations; no dependency download is needed.");
             if (journal.DependenciesInstalledBySetup.Contains(DependencyId.VJoy.ToString()))
             {
                 Report("Preparing the virtual controller output...");
@@ -281,7 +287,11 @@ internal static class Program
         {
         var packages = new Dictionary<DependencyId, (Version Target, string InstallerPath)>();
         bool hasInstallerActions = false;
+        if (manifest.VJoy is null || manifest.ViGEmBus is null || manifest.HidHide is null)
+            throw new InvalidDataException(
+                "The signed release manifest is missing a required controller driver.");
         if (manifest.VJoy is DependencyRelease vjoy) await AddPackageAsync(DependencyId.VJoy, vjoy);
+        if (manifest.ViGEmBus is DependencyRelease viGEmBus) await AddPackageAsync(DependencyId.ViGEmBus, viGEmBus);
         if (manifest.HidHide is DependencyRelease hidHide) await AddPackageAsync(DependencyId.HidHide, hidHide);
         if (packages.Count == 0) return false;
         if (hasInstallerActions) registerResume();
@@ -302,7 +312,7 @@ internal static class Program
 
         async Task AddPackageAsync(DependencyId id, DependencyRelease dependency)
         {
-            string name = id == DependencyId.VJoy ? "vJoy" : "HidHide";
+            string name = DependencyNames.DisplayName(id);
             Report($"Checking for {name}...");
             Version target = Version.Parse(dependency.Version.TrimStart('v', 'V'));
             DependencyState state = detector.Detect(id);
@@ -359,6 +369,30 @@ internal static class Program
         }
     }
 
+    private static int RunInternalViGEmProbe()
+    {
+        try
+        {
+            Console.SetOut(new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true });
+            Console.SetError(new StreamWriter(Console.OpenStandardError()) { AutoFlush = true });
+            using var backend = new ViGEmBackend();
+            int slots = backend.EnumerateDevices().Count;
+            Console.WriteLine($"ViGEmBus is operational; Xbox output slots: {slots}.");
+            return VJoyProbeProtocol.ReadyExitCode;
+        }
+        catch (Exception ex) when (ex is ViGEmException or DllNotFoundException
+            or BadImageFormatException or EntryPointNotFoundException)
+        {
+            try { Console.Error.WriteLine(ex.Message); } catch { }
+            return VJoyProbeProtocol.UnavailableExitCode;
+        }
+        catch (Exception ex)
+        {
+            try { Console.Error.WriteLine(ex.Message); } catch { }
+            return VJoyProbeProtocol.UnhealthyExitCode;
+        }
+    }
+
     private static int RunInternalVJoyProvision(int requiredCount)
     {
         try
@@ -398,6 +432,34 @@ internal static class Program
         {
             try { process.Kill(entireProcessTree: true); } catch { }
             throw new TimeoutException("The isolated vJoy readiness probe timed out.");
+        }
+
+        string output = outputTask.GetAwaiter().GetResult();
+        string error = errorTask.GetAwaiter().GetResult();
+        string detail = string.IsNullOrWhiteSpace(error) ? output : error;
+        return VJoyProbeProtocol.Interpret(process.ExitCode, detail);
+    }
+
+    private static DependencyProbeResult ProbeViGEmOutOfProcess()
+    {
+        var start = new ProcessStartInfo(CurrentExecutable())
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.ArgumentList.Add(InternalViGEmProbeArgument);
+        using Process process = Process.Start(start)
+            ?? throw new InvalidOperationException("The isolated ViGEmBus readiness probe could not start.");
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        try { process.WaitForExitAsync(timeout.Token).GetAwaiter().GetResult(); }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException("The isolated ViGEmBus readiness probe timed out.");
         }
 
         string output = outputTask.GetAwaiter().GetResult();
@@ -594,6 +656,22 @@ internal static class Program
             }
             catch
             {
+                // The process can exit between enumeration and reading MainModule
+                // after the cooperative --exit request. That is success, not an
+                // unverifiable foreign process.
+                try
+                {
+                    if (candidate.HasExited)
+                    {
+                        candidate.Dispose();
+                        continue;
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    candidate.Dispose();
+                    continue;
+                }
                 candidate.Dispose();
                 throw new InvalidOperationException(
                     "Setup could not verify the path of a running AFGC PC Manager process.");

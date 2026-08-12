@@ -17,6 +17,8 @@ if (!Version.TryParse(args[0], out Version? version))
 var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true };
 DependencyPins pins = JsonSerializer.Deserialize<DependencyPins>(await File.ReadAllTextAsync(args[1]), jsonOptions)
     ?? throw new InvalidDataException("Dependency pins are missing or invalid.");
+if (pins.VJoy is null || pins.ViGEmBus is null || pins.HidHide is null)
+    throw new InvalidDataException("The vJoy, ViGEmBus, and HidHide pins are all required.");
 var assets = new List<ReleaseAsset>();
 foreach (string path in args[3..])
 {
@@ -34,6 +36,7 @@ var manifest = new ReleaseManifest
     PublishedAtUtc = DateTimeOffset.UtcNow,
     Assets = assets,
     VJoy = pins.VJoy,
+    ViGEmBus = pins.ViGEmBus,
     HidHide = pins.HidHide
 };
 string output = Path.GetFullPath(args[2]);
@@ -42,4 +45,7 @@ await File.WriteAllTextAsync(output, JsonSerializer.Serialize(manifest, jsonOpti
 Console.WriteLine($"Created manifest for {version} with {assets.Count} assets.");
 return 0;
 
-internal sealed record DependencyPins(DependencyRelease VJoy, DependencyRelease HidHide);
+internal sealed record DependencyPins(
+    DependencyRelease VJoy,
+    DependencyRelease ViGEmBus,
+    DependencyRelease HidHide);

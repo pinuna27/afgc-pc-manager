@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>AFGCPCManager.Setup</AssemblyName><ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode><ApplicationIcon>..\..\src\AFGCPCManager.UI\Assets\afgc-icon.ico</ApplicationIcon></PropertyGroup>
+  <PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>AFGCPCManager.Setup</AssemblyName><ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode><ApplicationIcon>..\..\src\AFGCPCManager.UI\Assets\afgc-icon.ico</ApplicationIcon><IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract></PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AFGCPCManager.Setup.Core\AFGCPCManager.Setup.Core.csproj" />
     <ProjectReference Include="..\..\src\AFGCPCManager.VJoy\AFGCPCManager.VJoy.csproj" />
+    <ProjectReference Include="..\..\src\AFGCPCManager.ViGEm\AFGCPCManager.ViGEm.csproj" />
     <ProjectReference Include="..\..\src\AFGCPCManager.HidHide\AFGCPCManager.HidHide.csproj" />
     <ProjectReference Include="..\..\src\AFGCPCManager.UI\AFGCPCManager.UI.csproj" />
   </ItemGroup>

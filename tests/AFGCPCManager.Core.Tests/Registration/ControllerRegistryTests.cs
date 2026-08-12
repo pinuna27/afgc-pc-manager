@@ -43,7 +43,7 @@ public sealed class ControllerRegistryTests
             Controllers = [new()
             {
                 StableId = "a", DisplayName = "Old name", RegistrationOrder = 2,
-                PreferredVJoyId = 7
+                PreferredVJoyId = 7, PreferredXInputSlot = 3
             }],
             Overrides = new() { ["a"] = new() { HomeButton = HomeButtonMode.Disabled } }
         };
@@ -55,6 +55,7 @@ public sealed class ControllerRegistryTests
         Assert.Equal("New name", updated.DisplayName);
         Assert.Equal(2, updated.RegistrationOrder);
         Assert.Equal((uint)7, updated.PreferredVJoyId);
+        Assert.Equal((uint)3, updated.PreferredXInputSlot);
         Assert.Equal(HomeButtonMode.Disabled,
             registry.Snapshot.Overrides["a"].HomeButton);
     }
@@ -67,7 +68,7 @@ public sealed class ControllerRegistryTests
             Controllers = [new()
             {
                 StableId = "legacy", DisplayName = "Controller",
-                RegistrationOrder = 3, PreferredVJoyId = 7
+                RegistrationOrder = 3, PreferredVJoyId = 7, PreferredXInputSlot = 2
             }],
             Overrides = new() { ["legacy"] = new() { HomeButton = HomeButtonMode.Disabled } }
         };
@@ -78,9 +79,30 @@ public sealed class ControllerRegistryTests
 
         Assert.Equal(3, migrated.RegistrationOrder);
         Assert.Equal((uint)7, migrated.PreferredVJoyId);
+        Assert.Equal((uint)2, migrated.PreferredXInputSlot);
         Assert.DoesNotContain("legacy", registry.Snapshot.Overrides.Keys);
         Assert.Equal(HomeButtonMode.Disabled,
             registry.Snapshot.Overrides["persistent"].HomeButton);
+    }
+
+
+    [Fact]
+    public void OutputAssignmentsAreStoredIndependently()
+    {
+        var registry = new ControllerRegistry(new SettingsDocument
+        {
+            Controllers = [new()
+            {
+                StableId = "a", DisplayName = "Controller", RegistrationOrder = 1
+            }]
+        });
+
+        Assert.True(registry.SetPreferredVJoyId("a", 7));
+        Assert.True(registry.SetPreferredXInputSlot("a", 3));
+
+        RegisteredController saved = Assert.Single(registry.Snapshot.Controllers);
+        Assert.Equal((uint)7, saved.PreferredVJoyId);
+        Assert.Equal((uint)3, saved.PreferredXInputSlot);
     }
 
     [Fact]

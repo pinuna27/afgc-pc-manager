@@ -8,9 +8,11 @@ public sealed class DependencyUninstallTests
     [Fact]
     public void DefaultsOnOnlyForDependenciesInstalledByAfgc()
     {
-        var journal = new InstallationJournal { InstallDirectory = "x", Version = "1", DependenciesInstalledBySetup = ["VJoy"], DependenciesPresentBeforeSetup = ["HidHide"] };
+        var journal = new InstallationJournal { InstallDirectory = "x", Version = "1", DependenciesInstalledBySetup = ["VJoy", "ViGEmBus"], DependenciesPresentBeforeSetup = ["HidHide"] };
         DependencyUninstallOptions options = DependencyUninstallOptions.FromJournal(journal);
-        Assert.True(options.UninstallVJoy); Assert.False(options.UninstallHidHide);
+        Assert.True(options.UninstallVJoy);
+        Assert.True(options.UninstallViGEmBus);
+        Assert.False(options.UninstallHidHide);
     }
 
     [Theory]
@@ -36,6 +38,8 @@ public sealed class DependencyUninstallTests
 
     [Theory]
     [InlineData(DependencyId.VJoy, "vJoy Device Driver", true)]
+    [InlineData(DependencyId.ViGEmBus, "Nefarius Virtual Gamepad Emulation Bus Driver", true)]
+    [InlineData(DependencyId.ViGEmBus, "ViGEm Bus Driver", true)]
     [InlineData(DependencyId.HidHide, "Nefarius HidHide", true)]
     [InlineData(DependencyId.VJoy, "Third-party vJoy Feeder", false)]
     [InlineData(DependencyId.HidHide, "ViGEm Bus Driver", false)]
@@ -45,12 +49,14 @@ public sealed class DependencyUninstallTests
     [Fact]
     public void ContinuationDropsOnlyTheCompletedDependency()
     {
-        string[] arguments = ["--wizard-run", "--detached", "C:\\App", "--remove-vjoy", "--remove-hidhide"];
+        string[] arguments = ["--wizard-run", "--detached", "C:\\App", "--remove-vjoy", "--remove-vigembus", "--remove-hidhide"];
 
         List<string> afterVJoy = DependencyUninstallContinuation.AfterCompleted(arguments, DependencyId.VJoy);
-        List<string> afterHidHide = DependencyUninstallContinuation.AfterCompleted(afterVJoy, DependencyId.HidHide);
+        List<string> afterViGEm = DependencyUninstallContinuation.AfterCompleted(afterVJoy, DependencyId.ViGEmBus);
+        List<string> afterHidHide = DependencyUninstallContinuation.AfterCompleted(afterViGEm, DependencyId.HidHide);
 
         Assert.DoesNotContain("--remove-vjoy", afterVJoy, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("--remove-vigembus", afterVJoy, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("--remove-hidhide", afterVJoy, StringComparer.OrdinalIgnoreCase);
         Assert.Equal(["--wizard-run", "--detached", "C:\\App"], afterHidHide);
     }

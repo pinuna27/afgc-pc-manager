@@ -1,6 +1,25 @@
 namespace AFGCPCManager.Setup.Core.Dependencies;
 
-public enum DependencyId { VJoy, HidHide }
+public enum DependencyId { VJoy, ViGEmBus, HidHide }
+
+public static class DependencyNames
+{
+    public static string DisplayName(DependencyId dependency) => dependency switch
+    {
+        DependencyId.VJoy => "vJoy",
+        DependencyId.ViGEmBus => "ViGEmBus",
+        DependencyId.HidHide => "HidHide",
+        _ => dependency.ToString()
+    };
+
+    public static string RemovalArgument(DependencyId dependency) => dependency switch
+    {
+        DependencyId.VJoy => "--remove-vjoy",
+        DependencyId.ViGEmBus => "--remove-vigembus",
+        DependencyId.HidHide => "--remove-hidhide",
+        _ => throw new ArgumentOutOfRangeException(nameof(dependency))
+    };
+}
 
 public enum DependencyReadiness { Absent, Ready, PendingRestart, Unhealthy, Unknown }
 

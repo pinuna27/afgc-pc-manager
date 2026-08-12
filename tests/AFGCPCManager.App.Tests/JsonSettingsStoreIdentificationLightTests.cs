@@ -18,6 +18,27 @@ public sealed class JsonSettingsStoreIdentificationLightTests
             SettingsDocument loaded = await new JsonSettingsStore(path).LoadAsync(cancellationToken);
 
             Assert.False(loaded.Application.ControlIdentificationLights);
+            Assert.Equal(GamepadOutputMode.DirectInput, loaded.Application.OutputMode);
+        }
+        finally { DeleteTemporarySettings(path); }
+    }
+
+    [Fact]
+    public async Task XInputOutputModeRoundTrips()
+    {
+        string path = TemporarySettingsPath();
+        CancellationToken cancellationToken = TestContext.Current.CancellationToken;
+        try
+        {
+            var store = new JsonSettingsStore(path);
+            await store.SaveAsync(new SettingsDocument
+            {
+                Application = new AppSettings { OutputMode = GamepadOutputMode.XInput }
+            }, cancellationToken);
+
+            SettingsDocument loaded = await store.LoadAsync(cancellationToken);
+
+            Assert.Equal(GamepadOutputMode.XInput, loaded.Application.OutputMode);
         }
         finally { DeleteTemporarySettings(path); }
     }

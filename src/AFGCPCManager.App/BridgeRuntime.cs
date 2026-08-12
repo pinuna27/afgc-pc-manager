@@ -7,11 +7,13 @@ using AFGCPCManager.Core.Updates;
 using AFGCPCManager.Core.Output;
 using System.Diagnostics;
 using AFGCPCManager.VJoy;
+using AFGCPCManager.ViGEm;
 using AFGCPCManager.HidHide;
 using AFGCPCManager.Windows.Consumer;
 using AFGCPCManager.Windows.Devices;
 using AFGCPCManager.Windows.RawInput;
 using AFGCPCManager.Windows.Startup;
+using Microsoft.Win32;
 
 namespace AFGCPCManager.App;
 
@@ -25,18 +27,25 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     private readonly ControllerReconnectGate _reconnectGate = new();
     private readonly ControllerIdentificationLightManager _identificationLights = new();
     private readonly VJoyDirectInputNameManager _vjoyDisplayName = new();
+    private readonly OutputBackendCache _backends = new(mode => mode switch
+    {
+        GamepadOutputMode.DirectInput => new VJoyBackend(),
+        GamepadOutputMode.XInput => new ViGEmBackend(),
+        _ => throw new InvalidOperationException($"Unsupported output mode: {mode}.")
+    });
     private readonly IFireControllerDiscovery _discovery = new FireControllerDiscovery();
     private readonly ISettingsStore _settingsStore = new JsonSettingsStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "settings.json"));
     private readonly HidHideService _hidHide = new(new DeviceInstanceResolver(), new HidHideJournalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "hidhide-journal.json")));
     private readonly ControllerOutputSafetyGate _outputSafetyGate;
     private readonly WindowsStartupManager _startup = new();
     private readonly HttpClient _updateClient = new() { Timeout = TimeSpan.FromSeconds(10) };
-    private ControllerRegistry? _registry; private VJoyBackend? _backend; private Task? _runTask;
+    private ControllerRegistry? _registry; private IGamepadOutputBackend? _backend; private Task? _runTask;
+    private GamepadOutputMode? _backendMode;
     private IReadOnlyList<DiscoveredFireController> _lastDiscovery = [];
     private IReadOnlyList<ControllerRowModel> _lastRows = [];
     private readonly Queue<string> _recentEvents = new();
     private string _lastStatus = "Starting";
-    private int _compatibleVJoyDevices;
+    private int _compatibleOutputDevices;
     private int _lastProvisioningTarget;
     private int _failedProvisioningTarget = -1;
     private HidHideAvailability _hidingAvailability = HidHideAvailability.NotInstalled;
@@ -154,25 +163,38 @@ internal sealed class BridgeRuntime : IAsyncDisposable
 
     private async Task InitializeBackendAsync(CancellationToken cancellationToken)
     {
-        (VJoyBackend Backend, int Compatible) initialized = await Task.Run(() =>
+        GamepadOutputMode mode = _registry!.Snapshot.Application.OutputMode;
+        (IGamepadOutputBackend Backend, int Compatible) initialized = await Task.Run(() =>
         {
-            var backend = new VJoyBackend();
+            IGamepadOutputBackend backend = _backends.GetOrCreate(mode);
             try { return (backend, backend.EnumerateDevices().Count(x => x.Capabilities is not null)); }
-            catch { backend.Dispose(); throw; }
+            catch { _backends.Remove(mode, backend); throw; }
         }, cancellationToken);
 
         if (cancellationToken.IsCancellationRequested)
         {
-            initialized.Backend.Dispose();
             cancellationToken.ThrowIfCancellationRequested();
         }
 
-        _backend = initialized.Backend;
-        _compatibleVJoyDevices = initialized.Compatible;
-        SynchronizeVJoyDisplayName(_registry!.Snapshot);
-        try { _hidingAvailability = _hidHide.GetAvailability(); }
-        catch { _hidingAvailability = HidHideAvailability.NotOperational; }
-        PublishControllers();
+        await _mutation.WaitAsync(cancellationToken);
+        try
+        {
+            if (_backend is not null || _registry!.Snapshot.Application.OutputMode != mode)
+            {
+                return;
+            }
+
+            _backend = initialized.Backend;
+            _backendMode = mode;
+            _compatibleOutputDevices = initialized.Compatible;
+            // vJoy remains a DirectInput device even while Xbox output is selected.
+            // Keep its shared Windows name migrated away from the legacy suffix.
+            SynchronizeVJoyDisplayName(_registry.Snapshot);
+            try { _hidingAvailability = _hidHide.GetAvailability(); }
+            catch { _hidingAvailability = HidHideAvailability.NotOperational; }
+            PublishControllers();
+        }
+        finally { _mutation.Release(); }
     }
 
     private async Task RefreshDiscoveryAsync(CancellationToken cancellationToken)
@@ -205,6 +227,16 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             await RefreshDiscoveryAsync(cancellationToken);
             TrackHandleGrowth("controller discovery", ref previousHandleCount);
             SettingsDocument settings = _registry!.Snapshot;
+            GamepadOutputMode outputMode = settings.Application.OutputMode;
+            if (_backendMode != outputMode)
+            {
+                await DisposeAllControllersAsync();
+                _backend = null;
+                _backendMode = null;
+                _compatibleOutputDevices = 0;
+                PublishControllers();
+                return;
+            }
             var present = _lastDiscovery
                 .Where(x => x.IsConnected && x.Endpoints.Count > 0)
                 .Select(x => x.Identity.StableId)
@@ -259,15 +291,18 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             int requiredOutputs = present.Count(id => settings.Controllers.Any(x => x.StableId == id));
             if (requiredOutputs != _lastProvisioningTarget) { _lastProvisioningTarget = requiredOutputs; _failedProvisioningTarget = -1; }
             IReadOnlyList<OutputDeviceInfo> outputs = _backend!.EnumerateDevices();
-            TrackHandleGrowth("vJoy enumeration", ref previousHandleCount);
-            _compatibleVJoyDevices = outputs.Count(x => x.Capabilities is not null && x.Status is OutputDeviceStatus.Free or OutputDeviceStatus.Owned);
-            if (requiredOutputs > _compatibleVJoyDevices && requiredOutputs != _failedProvisioningTarget)
+            TrackHandleGrowth($"{OutputModeName(outputMode)} enumeration", ref previousHandleCount);
+            _compatibleOutputDevices = outputs.Count(x => x.Capabilities is not null
+                && x.Status is OutputDeviceStatus.Free or OutputDeviceStatus.Owned);
+            if (outputMode == GamepadOutputMode.DirectInput
+                && requiredOutputs > _compatibleOutputDevices
+                && requiredOutputs != _failedProvisioningTarget)
             {
                 try
                 {
                     await new VJoyDeviceProvisioner().EnsureCompatibleDeviceCountAsync(requiredOutputs, cancellationToken);
-                    _compatibleVJoyDevices = _backend.EnumerateDevices().Count(x => x.Capabilities is not null);
-                    RecordEvent($"Expanded vJoy capacity to {_compatibleVJoyDevices} compatible device(s).");
+                    _compatibleOutputDevices = _backend.EnumerateDevices().Count(x => x.Capabilities is not null);
+                    RecordEvent($"Expanded vJoy capacity to {_compatibleOutputDevices} compatible device(s).");
                 }
                 catch (Exception ex)
                 {
@@ -275,10 +310,40 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                     RecordEvent($"Could not provision {requiredOutputs} vJoy outputs: {ex.Message}");
                 }
             }
-            foreach (var device in _lastDiscovery)
+            var connectedRegistrations = settings.Controllers
+                .OrderBy(registration => registration.RegistrationOrder)
+                .Select(registration => (Registration: registration, Device: _lastDiscovery.FirstOrDefault(
+                    device => device.IsConnected && device.Endpoints.Count > 0
+                        && device.Identity.StableId == registration.StableId)))
+                .Where(item => item.Device is not null)
+                .ToArray();
+            if (outputMode == GamepadOutputMode.XInput)
             {
-                if (!device.IsConnected || device.Endpoints.Count == 0) continue;
-                RegisteredController? registration = settings.Controllers.FirstOrDefault(x => x.StableId == device.Identity.StableId); if (registration is null) continue;
+                foreach (string overflowId in connectedRegistrations
+                             .Skip((int)ViGEmBackend.MaximumDeviceId)
+                             .Select(item => item.Registration.StableId))
+                {
+                    if (!_controllers.Remove(overflowId, out RuntimeEntry? overflowRuntime))
+                        continue;
+                    try { await overflowRuntime.DisposeAsync(); }
+                    catch (Exception ex)
+                    {
+                        RecordEvent($"Could not release Xbox output {overflowRuntime.DeviceId}: {ex.Message}");
+                    }
+                }
+            }
+            for (int connectedIndex = 0; connectedIndex < connectedRegistrations.Length; connectedIndex++)
+            {
+                (RegisteredController registration, DiscoveredFireController? discovered) = connectedRegistrations[connectedIndex];
+                DiscoveredFireController device = discovered!;
+                if (outputMode == GamepadOutputMode.XInput
+                    && connectedIndex >= (int)ViGEmBackend.MaximumDeviceId)
+                {
+                    setupRequired = true;
+                    SetControllerIssue(device.Identity.StableId,
+                        "Xbox (XInput) supports up to 4 controllers. Switch to vJoy (DirectInput) for more.");
+                    continue;
+                }
                 if (_controllers.ContainsKey(device.Identity.StableId)) continue;
                 if (_reconnectGate.IsPending(device.Identity.StableId))
                 {
@@ -287,13 +352,18 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                         "Reconnect required: turn this controller off and back on once. Virtual output is disabled until then.");
                     continue;
                 }
-                var output = _backend.TryAcquire(registration.PreferredVJoyId);
-                TrackHandleGrowth("vJoy acquisition", ref previousHandleCount);
+                uint? preferredOutput = outputMode == GamepadOutputMode.XInput
+                    ? registration.PreferredXInputSlot
+                    : registration.PreferredVJoyId;
+                var output = _backend.TryAcquire(preferredOutput);
+                TrackHandleGrowth($"{OutputModeName(outputMode)} acquisition", ref previousHandleCount);
                 if (output is null)
                 {
                     setupRequired = true;
                     SetControllerIssue(device.Identity.StableId,
-                        "No compatible, free vJoy output is available.");
+                        outputMode == GamepadOutputMode.XInput
+                            ? "No free Xbox (XInput) slot is available."
+                            : "No compatible, free vJoy output is available.");
                     continue;
                 }
                 string[] inputPaths = device.Endpoints.Select(x => x.DevicePath).ToArray();
@@ -334,10 +404,13 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                     output.Dispose();
                     throw;
                 }
-                if (registration.PreferredVJoyId != output.DeviceId)
+                if (preferredOutput != output.DeviceId)
                 {
                     SettingsDocument beforeAssignment = _registry.Snapshot;
-                    _registry.SetPreferredVJoyId(device.Identity.StableId, output.DeviceId);
+                    if (outputMode == GamepadOutputMode.XInput)
+                        _registry.SetPreferredXInputSlot(device.Identity.StableId, output.DeviceId);
+                    else
+                        _registry.SetPreferredVJoyId(device.Identity.StableId, output.DeviceId);
                     try { await _settingsStore.SaveAsync(_registry.Snapshot, cancellationToken); }
                     catch
                     {
@@ -366,7 +439,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         try { startupEnabled = _startup.IsEnabled(); }
         catch { startupEnabled = false; }
         return new(typeof(Program).Assembly.GetName().Version?.ToString() ?? "Unknown", _lastStatus, _lastRows.Count, _lastRows.Count(x => x.IsConnected),
-            _compatibleVJoyDevices, _lastRows, _hidingAvailability.ToString(), startupEnabled, events);
+            _compatibleOutputDevices, _lastRows, _hidingAvailability.ToString(), startupEnabled, events,
+            GetSettings().Application.OutputMode);
     }
     public IReadOnlyList<DiscoveredFireController> GetAddCandidates() => _lastDiscovery.Where(x => x.IsConnected && x.Endpoints.Count > 0 && !GetSettings().Controllers.Any(c => c.StableId == x.Identity.StableId)).ToArray();
     private async Task CheckUpdatesAsync()
@@ -375,6 +449,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         {
             var sources = new List<ReleaseSource> { new(ReleaseComponent.AfgcPcManager, "pinuna27", "afgc-pc-manager", typeof(Program).Assembly.GetName().Version ?? new(0, 0)) };
             Version? vjoy = DetectVJoyVersion(); if (vjoy is not null) sources.Add(new(ReleaseComponent.VJoy, "BrunnerInnovation", "vJoy", vjoy));
+            Version? vigem = DetectViGEmBusVersion(); if (vigem is not null) sources.Add(new(ReleaseComponent.ViGEmBus, "nefarius", "ViGEmBus", vigem));
             Version? hidhide = null; try { hidhide = _hidHide.GetInstalledVersion(); } catch { } if (hidhide is not null) sources.Add(new(ReleaseComponent.HidHide, "nefarius", "HidHide", hidhide));
             var checker = new GitHubReleaseChecker(_updateClient); UpdateCheckResult[] results = await Task.WhenAll(sources.Select(x => checker.CheckAsync(x, _stop.Token)));
             var available = results.OfType<UpdateCheckResult.Available>().ToArray();
@@ -391,6 +466,35 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         foreach (string path in new[] { Path.Combine(programFiles, "vJoy", "x64", "vJoyInterface.dll"), Path.Combine(programFiles, "vJoy", "vJoyInterface.dll") })
             if (File.Exists(path) && Version.TryParse(FileVersionInfo.GetVersionInfo(path).FileVersion, out Version? version)) return version;
         return null;
+    }
+    private static Version? DetectViGEmBusVersion()
+    {
+        var versions = new List<Version>();
+        foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
+        {
+            try
+            {
+                using RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
+                using RegistryKey? uninstall = machine.OpenSubKey(
+                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
+                if (uninstall is null) continue;
+                foreach (string childName in uninstall.GetSubKeyNames())
+                {
+                    using RegistryKey? child = uninstall.OpenSubKey(childName);
+                    string? name = child?.GetValue("DisplayName")?.ToString();
+                    if (name is null || !(name.Contains("ViGEm Bus Driver", StringComparison.OrdinalIgnoreCase)
+                        || name.Contains("Virtual Gamepad Emulation Bus Driver", StringComparison.OrdinalIgnoreCase)))
+                        continue;
+                    if (Version.TryParse(child?.GetValue("DisplayVersion")?.ToString(), out Version? version))
+                        versions.Add(version);
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                return null;
+            }
+        }
+        return versions.OrderDescending().FirstOrDefault();
     }
     public async Task AddControllerAsync(string id)
     {
@@ -449,6 +553,16 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             _registry = new(settings);
             _identificationLights.Clear();
             await DisposeAllControllersAsync();
+            if (before.Application.OutputMode != settings.Application.OutputMode)
+            {
+                _backend = null;
+                _backendMode = null;
+                _compatibleOutputDevices = 0;
+                _lastProvisioningTarget = 0;
+                _failedProvisioningTarget = -1;
+                _controllerIssues.Clear();
+                RecordEvent($"Virtual controller output changed to {OutputModeName(settings.Application.OutputMode)}.");
+            }
             if (before.Application.HidePhysicalControllers && !settings.Application.HidePhysicalControllers)
             {
                 await _hidHide.RecoverOwnedEntriesAsync();
@@ -485,7 +599,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     {
         if (_registry is null) return; var present = _lastDiscovery.Where(x => x.IsConnected && x.Endpoints.Count > 0).Select(x => x.Identity.StableId).ToHashSet(StringComparer.Ordinal);
         SettingsDocument settings = _registry.Snapshot;
-        var rows = settings.Controllers.OrderBy(x => x.RegistrationOrder).Select(x => new ControllerRowModel(x.StableId, x.DisplayName, x.RegistrationOrder, present.Contains(x.StableId), _controllers.TryGetValue(x.StableId, out var runtime) ? runtime.DeviceId : null, _controllerIssues.GetValueOrDefault(x.StableId), settings.Application.ControlIdentificationLights ? ControllerIdentificationLightPattern.ForRegistrationOrder(x.RegistrationOrder) : null)).ToArray(); _lastRows = rows;
+        var rows = settings.Controllers.OrderBy(x => x.RegistrationOrder).Select(x => new ControllerRowModel(x.StableId, x.DisplayName, x.RegistrationOrder, present.Contains(x.StableId), _controllers.TryGetValue(x.StableId, out var runtime) ? runtime.DeviceId : null, _controllerIssues.GetValueOrDefault(x.StableId), settings.Application.ControlIdentificationLights ? ControllerIdentificationLightPattern.ForRegistrationOrder(x.RegistrationOrder) : null, settings.Application.OutputMode)).ToArray(); _lastRows = rows;
         ControllersChanged?.Invoke(this, rows);
     }
 
@@ -538,12 +652,20 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             RecordEvent($"The vJoy DirectInput display name could not be updated: {ex.Message}");
         }
     }
+    private static string OutputModeName(GamepadOutputMode mode) => mode switch
+    {
+        GamepadOutputMode.XInput => "Xbox (XInput)",
+        GamepadOutputMode.DirectInput => "vJoy (DirectInput)",
+        _ => mode.ToString()
+    };
     public async ValueTask DisposeAsync()
     {
         _stop.Cancel(); if (_runTask is not null) try { await _runTask; } catch (OperationCanceledException) { }
         await DisposeAllControllersAsync();
         foreach (string id in _hiddenControllers.ToArray()) await UnhideIfOwnedAsync(id, CancellationToken.None);
-        _backend?.Dispose(); _updateClient.Dispose(); _mutation.Dispose(); _stop.Dispose();
+        _backend = null;
+        _backends.Dispose();
+        _updateClient.Dispose(); _mutation.Dispose(); _stop.Dispose();
     }
     private sealed class RuntimeEntry(ControllerBridge bridge, uint deviceId, string id, Action<string, Exception?> stopped) : IAsyncDisposable
     {
@@ -556,14 +678,16 @@ internal sealed class BridgeRuntime : IAsyncDisposable
 }
 
 internal sealed record ControllerRowModel(string StableId, string DisplayName, int RegistrationOrder,
-    bool IsConnected, uint? VJoyDeviceId, string? Issue,
-    byte? IdentificationLightMask = null);
-internal sealed record DiagnosticSnapshot(string Version, string BridgeStatus, int RegisteredControllers, int ConnectedControllers, int CompatibleVJoyDevices, IReadOnlyList<ControllerRowModel> Controllers, string HidingStatus, bool StartupEnabled, IReadOnlyList<string> RecentEvents)
+    bool IsConnected, uint? OutputDeviceId, string? Issue,
+    byte? IdentificationLightMask = null,
+    GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput);
+internal sealed record DiagnosticSnapshot(string Version, string BridgeStatus, int RegisteredControllers, int ConnectedControllers, int CompatibleOutputDevices, IReadOnlyList<ControllerRowModel> Controllers, string HidingStatus, bool StartupEnabled, IReadOnlyList<string> RecentEvents, GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput)
 {
     public string ToReport()
     {
-        var lines = new List<string> { "AFGC PC Manager diagnostics", $"Version: {Version}", $"Bridge: {BridgeStatus}", $"Controllers: {ConnectedControllers} connected / {RegisteredControllers} registered", $"Compatible vJoy devices: {CompatibleVJoyDevices}", $"Physical hiding: {HidingStatus}", $"Start with Windows: {StartupEnabled}", "", "Controller assignments:" };
-        lines.AddRange(Controllers.Select(x => $"- Controller {x.RegistrationOrder} [{x.StableId[..Math.Min(12, x.StableId.Length)]}]: {(x.IsConnected ? "connected" : "disconnected")}, output {(x.VJoyDeviceId?.ToString() ?? "none")}, lights {IdentificationLightDisplay.Format(x.IdentificationLightMask)}{(x.Issue is null ? string.Empty : $", issue: {x.Issue}")}"));
+        string outputName = OutputMode == GamepadOutputMode.XInput ? "Xbox (XInput)" : "vJoy (DirectInput)";
+        var lines = new List<string> { "AFGC PC Manager diagnostics", $"Version: {Version}", $"Bridge: {BridgeStatus}", $"Controllers: {ConnectedControllers} connected / {RegisteredControllers} registered", $"Virtual output: {outputName}", $"Compatible output slots: {CompatibleOutputDevices}", $"Physical hiding: {HidingStatus}", $"Start with Windows: {StartupEnabled}", "", "Controller assignments:" };
+        lines.AddRange(Controllers.Select(x => $"- Controller {x.RegistrationOrder} [{x.StableId[..Math.Min(12, x.StableId.Length)]}]: {(x.IsConnected ? "connected" : "disconnected")}, output {(x.OutputDeviceId?.ToString() ?? "none")}, lights {IdentificationLightDisplay.Format(x.IdentificationLightMask)}{(x.Issue is null ? string.Empty : $", issue: {x.Issue}")}"));
         lines.Add(""); lines.Add("Recent events:"); lines.AddRange(RecentEvents.Select(x => $"- {x}")); return string.Join(Environment.NewLine, lines);
     }
 }

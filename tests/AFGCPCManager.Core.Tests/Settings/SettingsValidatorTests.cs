@@ -40,4 +40,34 @@ public sealed class SettingsValidatorTests
 
         Assert.Throws<InvalidDataException>(() => SettingsValidator.Validate(document));
     }
+
+    [Fact]
+    public void RejectsUndefinedOutputMode()
+    {
+        SettingsDocument document = new()
+        {
+            Application = new AppSettings { OutputMode = (GamepadOutputMode)999 }
+        };
+
+        Assert.Throws<InvalidDataException>(() => SettingsValidator.Validate(document));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public void RejectsInvalidPreferredXInputSlot(uint slot)
+    {
+        SettingsDocument document = new()
+        {
+            Controllers = [new RegisteredController
+            {
+                StableId = "controller",
+                DisplayName = "Fire controller",
+                RegistrationOrder = 1,
+                PreferredXInputSlot = slot
+            }]
+        };
+
+        Assert.Throws<InvalidDataException>(() => SettingsValidator.Validate(document));
+    }
 }

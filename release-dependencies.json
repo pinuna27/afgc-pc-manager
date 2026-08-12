@@ -8,6 +8,15 @@
     "expectedPublisher": "Brunner Elektronik AG",
     "mayRequireRestart": true
   },
+  "viGEmBus": {
+    "repository": "nefarius/ViGEmBus",
+    "releaseTag": "v1.22.0",
+    "version": "1.22.0",
+    "assetName": "ViGEmBus_1.22.0_x64_x86_arm64.exe",
+    "sha256": "89220A7865076B342892F98865F3499FB7C4CFD673159E89D352C360FD014C6A",
+    "expectedPublisher": "Nefarius Software Solutions e.U.",
+    "mayRequireRestart": true
+  },
   "hidHide": {
     "repository": "nefarius/HidHide",
     "releaseTag": "v1.5.230.0",

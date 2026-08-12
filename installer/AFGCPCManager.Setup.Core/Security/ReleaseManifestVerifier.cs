@@ -30,7 +30,7 @@ public sealed class ReleaseManifestVerifier(string publicKeyPem)
         if (value.Assets is null || value.Assets.Count == 0
             || value.Assets.Any(x => x is null || !IsSafeName(x.Name) || !IsHash(x.Sha256) || x.Size <= 0)) return "The release asset list is invalid.";
         if (value.Assets.GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase).Any(x => x.Count() > 1)) return "The release contains duplicate asset names.";
-        foreach (DependencyRelease dependency in new[] { value.VJoy, value.HidHide }.OfType<DependencyRelease>())
+        foreach (DependencyRelease dependency in new[] { value.VJoy, value.ViGEmBus, value.HidHide }.OfType<DependencyRelease>())
             if (!IsRepository(dependency.Repository) || !IsRepositoryPart(dependency.ReleaseTag)
                 || string.IsNullOrWhiteSpace(dependency.Version)
                 || !Version.TryParse(dependency.Version.TrimStart('v', 'V'), out _)

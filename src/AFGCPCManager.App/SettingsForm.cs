@@ -21,6 +21,15 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox _tray = Check("Show the tray icon when Windows starts the app");
     private readonly CheckBox _autoFind = Check("Automatically register new Fire controllers");
     private readonly CheckBox _hide = Check("Hide the original controller with HidHide");
+    private readonly RadioButton _xInput = OutputChoice("Xbox (XInput)");
+    private readonly RadioButton _directInput = OutputChoice("vJoy (DirectInput)");
+    private readonly ToolTip _outputModeToolTip = new()
+    {
+        AutoPopDelay = 10000,
+        InitialDelay = 350,
+        ReshowDelay = 100,
+        ShowAlways = false
+    };
     private readonly CheckBox _identificationLights = Check("Use controller identification lights");
     private readonly CheckBox _updates = Check("Check for stable updates automatically");
     private readonly CheckBox _notifications = Check("Show update notifications");
@@ -35,6 +44,12 @@ internal sealed class SettingsForm : Form
     private readonly HashSet<string> _resetOverrides = new(StringComparer.Ordinal);
 
     public SettingsDocument? Result { get; private set; }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _outputModeToolTip.Dispose();
+        base.Dispose(disposing);
+    }
 
     public SettingsForm(SettingsDocument source, string? initialController,
         Func<DiagnosticSnapshot> diagnostics)
@@ -64,7 +79,7 @@ internal sealed class SettingsForm : Form
         var content = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(24, 18, 24, 18),
+            Padding = new Padding(20, 12, 20, 12),
             BackColor = UiTheme.Canvas
         };
         content.Controls.Add(tabs);
@@ -96,7 +111,9 @@ internal sealed class SettingsForm : Form
         _controller.ValueMember = "Key";
         _controller.DataSource = _source.Controllers.Select(controller =>
                 new KeyValuePair<string, string>(controller.StableId,
-                    $"Controller {controller.RegistrationOrder}: {controller.DisplayName}"))
+                    $"Controller {controller.RegistrationOrder}: " +
+                    VirtualControllerDisplayName.Format(controller.DisplayName,
+                        _source.Application.OutputMode)))
             .ToList();
 
         FormatCombo<HomeButtonMode>(_home, value => value switch
@@ -145,11 +162,12 @@ internal sealed class SettingsForm : Form
         var page = NewPage("General");
         var preferences = new FlowLayoutPanel
         {
+            Name = "GeneralPreferences",
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.TopDown,
             WrapContents = false,
             AutoScroll = true,
-            Padding = new Padding(22, 18, 22, 18),
+            Padding = new Padding(18, 10, 18, 10),
             BackColor = UiTheme.Surface
         };
         preferences.Controls.Add(Preference(_startup,
@@ -160,10 +178,11 @@ internal sealed class SettingsForm : Form
             "Register newly connected Amazon Fire controllers without opening Add controller."));
         preferences.Controls.Add(Preference(_hide,
             "Prevents games and Windows from receiving duplicate physical input."));
+        preferences.Controls.Add(OutputModePreference());
         preferences.Controls.Add(Preference(_identificationLights,
             "Assign each registered controller a stable four-light pattern shown in the controller list."));
         preferences.Controls.Add(Preference(_updates,
-            "Check the app, vJoy, and HidHide for newer stable versions."));
+            "Check the app, vJoy, ViGEmBus, and HidHide for newer stable versions."));
         preferences.Controls.Add(Preference(_notifications,
             "Show a Windows notification when a stable update is available."));
         bool fittingPreferences = false;
@@ -173,7 +192,17 @@ internal sealed class SettingsForm : Form
             fittingPreferences = true;
             try
             {
-                int scrollbar = preferences.VerticalScroll.Visible
+                int contentHeight = preferences.Padding.Vertical +
+                    preferences.Controls.Cast<Control>()
+                        .Sum(control => control.Height + control.Margin.Vertical);
+                // FlowLayoutPanel's implicit display rectangle can stop as soon as
+                // the final control is barely visible. Add a separate trailing
+                // inset so the final preference and its bottom breathing room can
+                // both be reached at the scrollbar's maximum position.
+                int minimumHeight = contentHeight + preferences.Padding.Bottom;
+                if (preferences.AutoScrollMinSize.Height != minimumHeight)
+                    preferences.AutoScrollMinSize = new Size(0, minimumHeight);
+                int scrollbar = minimumHeight > preferences.ClientSize.Height
                     ? SystemInformation.VerticalScrollBarWidth
                     : 0;
                 int width = Math.Max(UiTheme.Scale(preferences, 240),
@@ -337,6 +366,8 @@ internal sealed class SettingsForm : Form
         _tray.Checked = settings.ShowTrayOnAutomaticStart;
         _autoFind.Checked = settings.AutomaticallyFindControllers;
         _hide.Checked = settings.HidePhysicalControllers;
+        _xInput.Checked = settings.OutputMode == GamepadOutputMode.XInput;
+        _directInput.Checked = settings.OutputMode == GamepadOutputMode.DirectInput;
         _identificationLights.Checked = settings.ControlIdentificationLights;
         _updates.Checked = settings.AutomaticallyCheckForUpdates;
         _notifications.Checked = settings.ShowNotifications;
@@ -423,6 +454,9 @@ internal sealed class SettingsForm : Form
             ShowTrayOnAutomaticStart = _tray.Checked,
             AutomaticallyFindControllers = _autoFind.Checked,
             HidePhysicalControllers = _hide.Checked,
+            OutputMode = _xInput.Checked
+                ? GamepadOutputMode.XInput
+                : GamepadOutputMode.DirectInput,
             ControlIdentificationLights = _identificationLights.Checked,
             AutomaticallyCheckForUpdates = _updates.Checked,
             ShowNotifications = _notifications.Checked
@@ -455,7 +489,7 @@ internal sealed class SettingsForm : Form
     private static TabPage NewPage(string text) => new(text)
     {
         BackColor = UiTheme.Canvas,
-        Padding = new Padding(12, 16, 12, 12)
+        Padding = new Padding(10, 10, 10, 10)
     };
 
     private static CheckBox Check(string text) => new()
@@ -464,6 +498,46 @@ internal sealed class SettingsForm : Form
         AutoSize = true,
         ForeColor = UiTheme.Text
     };
+
+    private static RadioButton OutputChoice(string text) => new()
+    {
+        Text = text,
+        AutoSize = true,
+        ForeColor = UiTheme.Text
+    };
+
+    private Control OutputModePreference()
+    {
+        const string xInputHelp = "Native game support; up to 4 controllers.";
+        const string directInputHelp = "Over 4 controllers; some games need a translator.";
+        var panel = new Panel
+        {
+            Width = 760,
+            Height = 88,
+            Margin = Padding.Empty,
+            BackColor = UiTheme.Surface
+        };
+        Label heading = UiTheme.Body("Virtual controller output");
+        heading.Location = new Point(0, 2);
+        _xInput.Location = new Point(20, 27);
+        _directInput.Location = new Point(20, 57);
+        Label xInputDetail = UiTheme.Body(xInputHelp, muted: true);
+        xInputDetail.Location = new Point(160, 28);
+        Label directInputDetail = UiTheme.Body(directInputHelp, muted: true);
+        directInputDetail.Location = new Point(160, 58);
+        _xInput.AccessibleDescription = xInputHelp;
+        _directInput.AccessibleDescription = directInputHelp;
+        _outputModeToolTip.SetToolTip(_xInput, xInputHelp);
+        _outputModeToolTip.SetToolTip(xInputDetail, xInputHelp);
+        _outputModeToolTip.SetToolTip(_directInput, directInputHelp);
+        _outputModeToolTip.SetToolTip(directInputDetail, directInputHelp);
+        panel.Controls.Add(heading);
+        panel.Controls.Add(_xInput);
+        panel.Controls.Add(xInputDetail);
+        panel.Controls.Add(_directInput);
+        panel.Controls.Add(directInputDetail);
+        return panel;
+    }
 
     private static ComboBox Combo() => new()
     {
@@ -475,13 +549,13 @@ internal sealed class SettingsForm : Form
         var panel = new Panel
         {
             Width = 760,
-            Height = 58,
+            Height = 48,
             Margin = Padding.Empty,
             BackColor = UiTheme.Surface
         };
-        checkBox.Location = new Point(0, 6);
+        checkBox.Location = new Point(0, 2);
         var detail = UiTheme.Body(description, muted: true);
-        detail.Location = new Point(24, 29);
+        detail.Location = new Point(20, 23);
         panel.Controls.Add(checkBox);
         panel.Controls.Add(detail);
         return panel;

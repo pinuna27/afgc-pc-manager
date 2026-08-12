@@ -5,6 +5,8 @@ namespace AFGCPCManager.Setup.Core.Installation;
 public static class WindowsInstallationRegistration
 {
     private const string KeyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\AFGCPCManager";
+    private const string StartupKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string StartupValueName = "AFGC PC Manager";
     public static void Register(string installDirectory, Version version)
     {
         installDirectory = Path.GetFullPath(installDirectory);
@@ -23,6 +25,12 @@ public static class WindowsInstallationRegistration
     public static void Unregister()
     {
         var errors = new List<Exception>();
+        try
+        {
+            using RegistryKey? startup = Registry.CurrentUser.OpenSubKey(StartupKeyPath, writable: true);
+            startup?.DeleteValue(StartupValueName, throwOnMissingValue: false);
+        }
+        catch (Exception ex) { errors.Add(ex); }
         try { WindowsShortcutManager.Remove(); }
         catch (Exception ex) { errors.Add(ex); }
         try { Registry.LocalMachine.DeleteSubKeyTree(KeyPath, false); }

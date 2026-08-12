@@ -18,8 +18,8 @@ public sealed class VJoyDirectInputNameManagerTests
 
         VJoyDisplayNameUpdate? result = manager.Synchronize(controllers);
 
-        Assert.Equal("Lowest output (Corrected)", written);
-        Assert.Equal(new("Lowest output (Corrected)", true), result);
+        Assert.Equal("Lowest output (DirectInput)", written);
+        Assert.Equal(new("Lowest output (DirectInput)", true), result);
     }
 
     [Fact]
@@ -34,7 +34,7 @@ public sealed class VJoyDirectInputNameManagerTests
             Controller("First", registrationOrder: 1)
         ]);
 
-        Assert.Equal("First (Corrected)", written);
+        Assert.Equal("First (DirectInput)", written);
     }
 
     [Fact]
@@ -42,22 +42,23 @@ public sealed class VJoyDirectInputNameManagerTests
     {
         int writes = 0;
         var manager = new VJoyDirectInputNameManager(
-            () => "Amazon Fire Game Controller (Corrected)", _ => writes++);
+            () => "Amazon Fire Game Controller (DirectInput)", _ => writes++);
 
         VJoyDisplayNameUpdate? result = manager.Synchronize(
             [Controller("Amazon Fire Game Controller", 1, 1)]);
 
         Assert.Equal(0, writes);
-        Assert.Equal(new("Amazon Fire Game Controller (Corrected)", false), result);
+        Assert.Equal(new("Amazon Fire Game Controller (DirectInput)", false), result);
     }
 
     [Theory]
-    [InlineData("Amazon Fire Game Controller", "Amazon Fire Game Controller (Corrected)")]
-    [InlineData(" Amazon Fire Game Controller (Corrected) ", "Amazon Fire Game Controller (Corrected)")]
-    [InlineData("Pad (Corrected) (Corrected)", "Pad (Corrected)")]
-    [InlineData("Pad\0Name", "PadName (Corrected)")]
-    public void CorrectedNameIsCleanAndIdempotent(string original, string expected) =>
-        Assert.Equal(expected, VJoyDirectInputNameManager.BuildCorrectedName(original));
+    [InlineData("Amazon Fire Game Controller", "Amazon Fire Game Controller (DirectInput)")]
+    [InlineData(" Amazon Fire Game Controller (Corrected) ", "Amazon Fire Game Controller (DirectInput)")]
+    [InlineData("Pad (DirectInput) (DirectInput)", "Pad (DirectInput)")]
+    [InlineData("Pad (XInput)", "Pad (DirectInput)")]
+    [InlineData("Pad\0Name", "PadName (DirectInput)")]
+    public void DirectInputNameIsCleanMigratedAndIdempotent(string original, string expected) =>
+        Assert.Equal(expected, VJoyDirectInputNameManager.BuildDirectInputName(original));
 
     [Fact]
     public void NoRegisteredControllersLeavesNameUntouched()

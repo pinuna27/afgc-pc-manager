@@ -44,10 +44,28 @@ internal static class ControllerDisplayNameResolver
                 && CM_Locate_DevNodeW(out uint device, instanceId, 0) == CrSuccess)
             {
                 var properties = new List<(string? FriendlyName, string? BusDescription)>();
+                bool reachedControllerNode = false;
                 for (int depth = 0; depth < MaximumParentDepth; depth++)
                 {
                     string? currentInstanceId = GetDeviceStringProperty(device, DeviceInstanceId);
-                    serialNumber ??= ExtractBluetoothAddress(currentInstanceId);
+                    string? nodeSerialNumber = ExtractBluetoothAddress(currentInstanceId);
+                    serialNumber ??= nodeSerialNumber;
+
+                    if (!IsControllerDeviceNode(currentInstanceId, serialNumber))
+                    {
+                        // A HID controller is nested beneath Bluetooth and USB adapter
+                        // nodes. Their names describe the transport hardware, not the
+                        // controller. Once the matching VID/PID or Bluetooth-address
+                        // chain ends, no higher ancestor is eligible to name the pad.
+                        if (reachedControllerNode) break;
+
+                        if (CM_Get_Parent(out uint skippedParent, device, 0) != CrSuccess)
+                            break;
+                        device = skippedParent;
+                        continue;
+                    }
+
+                    reachedControllerNode = true;
                     properties.Add((
                         GetDeviceStringProperty(device, DeviceFriendlyName),
                         GetDeviceStringProperty(device, DeviceBusReportedDescription)));
@@ -79,6 +97,19 @@ internal static class ControllerDisplayNameResolver
         return match.Success
             ? FireControllerPathIdentity.NormalizeSerialNumber(match.Groups[1].Value)
             : null;
+    }
+
+    internal static bool IsControllerDeviceNode(string? instanceId,
+        string? controllerSerialNumber)
+    {
+        if (FireControllerPathIdentity.IsMatch(instanceId)) return true;
+
+        string? expectedSerial = FireControllerPathIdentity.NormalizeSerialNumber(
+            controllerSerialNumber);
+        string? nodeSerial = ExtractBluetoothAddress(instanceId);
+        return expectedSerial is not null
+            && nodeSerial is not null
+            && nodeSerial.Equals(expectedSerial, StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string? SelectName(

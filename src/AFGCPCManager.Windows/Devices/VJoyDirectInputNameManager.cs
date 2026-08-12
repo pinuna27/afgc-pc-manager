@@ -10,7 +10,9 @@ public sealed class VJoyDirectInputNameManager
     internal const string OemRegistryPath =
         @"System\CurrentControlSet\Control\MediaProperties\PrivateProperties\Joystick\OEM\VID_1234&PID_BEAD";
     private const string OemNameValue = "OEMName";
-    private const string CorrectedSuffix = " (Corrected)";
+    private const string DirectInputSuffix = " (DirectInput)";
+    private static readonly string[] LegacyOrModeSuffixes =
+        [" (Corrected)", " (DirectInput)", " (XInput)"];
     private const int MaximumNameLength = 255;
 
     private readonly Func<string?> _read;
@@ -33,7 +35,7 @@ public sealed class VJoyDirectInputNameManager
             .FirstOrDefault();
         if (selected is null) return null;
 
-        string desired = BuildCorrectedName(selected.DisplayName);
+        string desired = BuildDirectInputName(selected.DisplayName);
         string? current = _read();
         if (string.Equals(current, desired, StringComparison.Ordinal))
             return new(desired, false);
@@ -42,19 +44,29 @@ public sealed class VJoyDirectInputNameManager
         return new(desired, true);
     }
 
-    internal static string BuildCorrectedName(string originalName)
+    internal static string BuildDirectInputName(string originalName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(originalName);
         string sanitized = new(originalName.Where(character => !char.IsControl(character)).ToArray());
         sanitized = sanitized.Trim();
-        while (sanitized.EndsWith(CorrectedSuffix, StringComparison.OrdinalIgnoreCase))
-            sanitized = sanitized[..^CorrectedSuffix.Length].TrimEnd();
+        bool removed;
+        do
+        {
+            removed = false;
+            foreach (string suffix in LegacyOrModeSuffixes)
+            {
+                if (!sanitized.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+                sanitized = sanitized[..^suffix.Length].TrimEnd();
+                removed = true;
+                break;
+            }
+        } while (removed);
         if (sanitized.Length == 0) sanitized = "Game Controller";
 
-        int maximumBaseLength = MaximumNameLength - CorrectedSuffix.Length;
+        int maximumBaseLength = MaximumNameLength - DirectInputSuffix.Length;
         if (sanitized.Length > maximumBaseLength)
             sanitized = sanitized[..maximumBaseLength].TrimEnd();
-        return sanitized + CorrectedSuffix;
+        return sanitized + DirectInputSuffix;
     }
 
     private static string? ReadCurrentName()
