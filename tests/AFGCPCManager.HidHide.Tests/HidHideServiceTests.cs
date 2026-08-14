@@ -16,9 +16,28 @@ public sealed class HidHideServiceTests : IDisposable
     {
         string app = Path.Combine(_root, "app.exe"); Directory.CreateDirectory(_root); File.WriteAllText(app, "test");
         var api = new FakeApi(); api.Blocked.Add("other"); api.Apps.Add("C:\\Other.exe"); var service = Create(api, new() { ["path"] = "owned" });
-        await service.HideAsync("controller", ["path"], app, TestContext.Current.CancellationToken); await service.RecoverOwnedEntriesAsync(TestContext.Current.CancellationToken);
+        await service.HideAsync("controller", ["path"], app, TestContext.Current.CancellationToken);
+        HidHideRecoveryResult result = await service.RecoverOwnedEntriesAsync(
+            TestContext.Current.CancellationToken);
         Assert.Equal(["other"], api.Blocked); Assert.Equal(["C:\\Other.exe"], api.Apps);
         Assert.False(api.IsActive);
+        Assert.True(result.Changed);
+        Assert.Equal(1, result.RemovedDeviceInstanceIds);
+        Assert.Equal(1, result.RemovedApplicationPaths);
+        Assert.True(result.DeactivatedByApplication);
+    }
+
+    [Fact]
+    public async Task RecoveryReportsNoChangeWhenApplicationOwnsNoEntries()
+    {
+        var api = new FakeApi { IsActive = true };
+        HidHideService service = Create(api, []);
+
+        HidHideRecoveryResult result = await service.RecoverOwnedEntriesAsync(
+            TestContext.Current.CancellationToken);
+
+        Assert.False(result.Changed);
+        Assert.True(api.IsActive);
     }
     [Fact]
     public async Task UnhideRemovesOnlySpecifiedControllersEntries()
@@ -256,7 +275,8 @@ public sealed class HidHideServiceTests : IDisposable
     private sealed class FakeResolver(Dictionary<string, string> map) : IDeviceInstanceResolver { public string Resolve(string path) => map[path]; }
     private sealed class FakeApi : IHidHideApi
     {
-        public bool IsInstalled { get; set; } = true; public bool IsOperational { get; set; } = true; public bool IsActive { get; set; } public bool IsAppListInverted { get; set; }
+        public bool IsInstalled { get; set; } = true; public bool IsOperational { get; set; } = true; public bool IsActive { get; set; }
+        public bool IsAppListInverted { get; set; }
         public bool ThrowOnRemoveBlockedOnce { get; set; }
         public bool IgnoreBlockedAdds { get; set; }
         public bool ReturnApplicationPathsInDriverNamespace { get; set; }

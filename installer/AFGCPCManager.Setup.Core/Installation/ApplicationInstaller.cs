@@ -19,7 +19,8 @@ public sealed class ApplicationInstaller(JournalStore journalStore)
         string backup = installDirectory + ".previous";
         RecoverInterruptedSwap(installDirectory, backup);
         InstallationJournal? previous = await journalStore.LoadAsync(
-            Path.Combine(installDirectory, "install-journal.json"), cancellationToken);
+            Path.Combine(installDirectory, SetupProductIdentity.InstallJournalFileName),
+            cancellationToken);
         if (previous is null && Directory.Exists(installDirectory)
             && Directory.EnumerateFileSystemEntries(installDirectory).Any())
             throw new InvalidOperationException(
@@ -62,7 +63,8 @@ public sealed class ApplicationInstaller(JournalStore journalStore)
                 DependenciesPresentBeforeSetup = previous is null
                     ? [] : new(previous.DependenciesPresentBeforeSetup, StringComparer.OrdinalIgnoreCase)
             };
-            await journalStore.SaveAsync(Path.Combine(staging, "install-journal.json"), journal, cancellationToken);
+            await journalStore.SaveAsync(Path.Combine(
+                staging, SetupProductIdentity.InstallJournalFileName), journal, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             bool movedExistingInstall = false;
@@ -97,7 +99,8 @@ public sealed class ApplicationInstaller(JournalStore journalStore)
         {
             cancellationToken.ThrowIfCancellationRequested();
             string relative = NormalizeRelative(Path.GetRelativePath(installDirectory, source));
-            if (relative.Equals("install-journal.json", StringComparison.OrdinalIgnoreCase) || newPaths.Contains(relative)) continue;
+            if (relative.Equals(SetupProductIdentity.InstallJournalFileName,
+                    StringComparison.OrdinalIgnoreCase) || newPaths.Contains(relative)) continue;
 
             bool preserve = !oldFiles.TryGetValue(relative, out InstalledFile? oldEntry)
                 || !string.Equals(await Hashing.Sha256Async(source, cancellationToken), oldEntry.Sha256,

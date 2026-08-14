@@ -1,10 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows10.0.17763.0</TargetFramework>
+    <TargetFramework>$(WindowsTargetFramework)</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
     <AssemblyName>AFGCPCManager</AssemblyName>
     <RootNamespace>AFGCPCManager.App</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
@@ -23,15 +21,15 @@
           BeforeTargets="CopyDevelopmentVisibilityProbe"
           Condition="'$(PublishSingleFile)' != 'true'">
     <MSBuild Projects="..\AFGCPCManager.HidVisibilityProbe\AFGCPCManager.HidVisibilityProbe.csproj"
-             Targets="Build" Properties="Configuration=$(Configuration)" />
+             Targets="Build"
+             Properties="Configuration=$(Configuration)"
+             BuildInParallel="$(BuildInParallel)" />
   </Target>
   <Target Name="CopyDevelopmentVisibilityProbe" AfterTargets="Build"
           Condition="'$(PublishSingleFile)' != 'true'">
     <ItemGroup>
-      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.exe" />
-      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.dll" />
-      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.deps.json" />
-      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\net10.0-windows\AFGCPCManager.HidVisibilityProbe.runtimeconfig.json" />
+      <VisibilityProbeArtifact Include="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\$(WindowsTargetFramework)\AFGCPCManager.HidVisibilityProbe.*"
+                               Exclude="..\AFGCPCManager.HidVisibilityProbe\bin\$(Configuration)\$(WindowsTargetFramework)\*.pdb" />
     </ItemGroup>
     <Copy SourceFiles="@(VisibilityProbeArtifact)" DestinationFolder="$(TargetDir)"
           SkipUnchangedFiles="true" />

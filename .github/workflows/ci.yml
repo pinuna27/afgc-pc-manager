@@ -26,8 +26,15 @@ jobs:
       - name: Restore
         run: dotnet restore AFGCPCManager.slnx
 
+      - name: Validate repository structure
+        shell: pwsh
+        run: ./tools/Test-RepositoryStructure.ps1
+
       - name: Build
         run: dotnet build AFGCPCManager.slnx --configuration Release --no-restore
+
+      - name: Verify analyzer fixes
+        run: dotnet format analyzers AFGCPCManager.slnx --verify-no-changes --no-restore
 
       - name: Test
         run: dotnet test AFGCPCManager.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"

@@ -3,9 +3,7 @@ namespace AFGCPCManager.App;
 internal static class RuntimeEventLog
 {
     private static readonly object Gate = new();
-    public static string PathName { get; } = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "AFGC PC Manager", "runtime.log");
+    public static string PathName { get; } = AppIdentity.RuntimeLogPath;
 
     public static void Write(string message)
     {

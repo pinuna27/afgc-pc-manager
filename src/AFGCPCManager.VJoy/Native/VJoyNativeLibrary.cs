@@ -4,7 +4,7 @@ namespace AFGCPCManager.VJoy.Native;
 
 internal sealed class VJoyNativeLibrary : IVJoyNativeApi
 {
-    private readonly nint _handle;
+    private nint _handle;
     private readonly EnabledDelegate _enabled;
     private readonly StatusDelegate _status;
     private readonly CountDelegate _buttons, _povs;
@@ -13,7 +13,6 @@ internal sealed class VJoyNativeLibrary : IVJoyNativeApi
     private readonly AcquireDelegate _acquire;
     private readonly UpdateDelegate _update;
     private readonly DeviceDelegate _reset, _relinquish;
-    private bool _disposed;
 
     private VJoyNativeLibrary(string path)
     {
@@ -61,15 +60,19 @@ internal sealed class VJoyNativeLibrary : IVJoyNativeApi
     public void Reset(uint id) => _reset(id);
     public void Relinquish(uint id) => _relinquish(id);
 
-    public void Dispose() { if (!_disposed) { NativeLibrary.Free(_handle); _disposed = true; } }
+    public void Dispose()
+    {
+        nint handle = Interlocked.Exchange(ref _handle, 0);
+        if (handle != 0) NativeLibrary.Free(handle);
+    }
     private T Load<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(_handle, name));
 
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.Bool)] private delegate bool EnabledDelegate();
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)][return: MarshalAs(UnmanagedType.Bool)] private delegate bool EnabledDelegate();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate VJoyDeviceStatus StatusDelegate(uint id);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int CountDelegate(uint id);
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.Bool)] private delegate bool AxisExistsDelegate(uint id, uint axis);
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.Bool)] private delegate bool AxisLimitDelegate(uint id, uint axis, out int value);
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.Bool)] private delegate bool AcquireDelegate(uint id);
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] [return: MarshalAs(UnmanagedType.Bool)] private delegate bool UpdateDelegate(uint id, ref VJoyPosition value);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)][return: MarshalAs(UnmanagedType.Bool)] private delegate bool AxisExistsDelegate(uint id, uint axis);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)][return: MarshalAs(UnmanagedType.Bool)] private delegate bool AxisLimitDelegate(uint id, uint axis, out int value);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)][return: MarshalAs(UnmanagedType.Bool)] private delegate bool AcquireDelegate(uint id);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)][return: MarshalAs(UnmanagedType.Bool)] private delegate bool UpdateDelegate(uint id, ref VJoyPosition value);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate void DeviceDelegate(uint id);
 }

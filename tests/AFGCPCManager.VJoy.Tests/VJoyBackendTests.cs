@@ -35,7 +35,9 @@ public sealed class VJoyBackendTests
         Assert.Equal((uint)1, session!.DeviceId);
     }
 
-    [Theory] [InlineData(10, 1)] [InlineData(11, 0)]
+    [Theory]
+    [InlineData(10, 1)]
+    [InlineData(11, 0)]
     public void RejectsInsufficientCapabilities(int buttons, int povs)
     {
         var api = new FakeVJoyNativeApi { Buttons = buttons, Povs = povs }; api.Statuses[1] = VJoyDeviceStatus.Free;
@@ -98,5 +100,18 @@ public sealed class VJoyBackendTests
         Assert.Null(devices[1].Capabilities);
         Assert.Equal(0, api.HasAxisCalls);
         Assert.Equal(0, api.AxisRangeCalls);
+    }
+
+    [Fact]
+    public void BackendCannotUnloadNativeLibraryWhileSessionIsAlive()
+    {
+        var api = new FakeVJoyNativeApi();
+        api.Statuses[1] = VJoyDeviceStatus.Free;
+        var backend = new VJoyBackend(api);
+        IGamepadOutputSession session = backend.TryAcquire()!;
+
+        backend.Dispose();
+
+        session.Dispose();
     }
 }

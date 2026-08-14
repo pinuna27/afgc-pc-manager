@@ -16,20 +16,20 @@ public sealed class RegisteredDependencyUninstaller : IRegisteredDependencyUnins
     public RegisteredUninstaller? Find(DependencyId dependency)
     {
         foreach (RegistryHive hive in new[] { RegistryHive.LocalMachine, RegistryHive.CurrentUser })
-        foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
-        {
-            using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
-            using RegistryKey? uninstall = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
-            if (uninstall is null) continue;
-            foreach (string childName in uninstall.GetSubKeyNames())
+            foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
             {
-                using RegistryKey? child = uninstall.OpenSubKey(childName);
-                string? displayName = child?.GetValue("DisplayName")?.ToString();
-                string? command = child?.GetValue("UninstallString")?.ToString();
-                if (displayName is not null && command is not null && Matches(dependency, displayName))
-                    return new(displayName, command);
+                using RegistryKey baseKey = RegistryKey.OpenBaseKey(hive, view);
+                using RegistryKey? uninstall = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
+                if (uninstall is null) continue;
+                foreach (string childName in uninstall.GetSubKeyNames())
+                {
+                    using RegistryKey? child = uninstall.OpenSubKey(childName);
+                    string? displayName = child?.GetValue("DisplayName")?.ToString();
+                    string? command = child?.GetValue("UninstallString")?.ToString();
+                    if (displayName is not null && command is not null && Matches(dependency, displayName))
+                        return new(displayName, command);
+                }
             }
-        }
         return null;
     }
 

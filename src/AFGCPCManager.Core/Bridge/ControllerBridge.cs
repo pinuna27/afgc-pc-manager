@@ -13,29 +13,51 @@ public sealed class ControllerBridge(
 {
     private readonly PhysicalStateAccumulator _accumulator = new();
     private readonly ControllerStateMapper _mapper = new();
+    private readonly object _lifetimeGate = new();
+    private readonly CancellationTokenSource _stop = new();
     private ControllerMappingProfile _profile = profile ?? throw new ArgumentNullException(nameof(profile));
-    private bool _disposed;
+    private Task? _runTask;
+    private Task? _disposeTask;
 
-    public async Task RunAsync(CancellationToken cancellationToken = default)
+    public Task RunAsync(CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await output.WriteAsync(VirtualGamepadState.Neutral, cancellationToken);
+        lock (_lifetimeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeTask is not null, this);
+            if (_runTask is not null)
+                throw new InvalidOperationException("A controller bridge can only be run once.");
+            return _runTask = RunCoreAsync(cancellationToken);
+        }
+    }
+
+    private async Task RunCoreAsync(CancellationToken cancellationToken)
+    {
+        using var runStop = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _stop.Token);
+        CancellationToken runToken = runStop.Token;
+        await output.WriteAsync(VirtualGamepadState.Neutral, runToken)
+            .ConfigureAwait(false);
         Exception? runFailure = null;
         try
         {
-            await foreach (var raw in input.ReadReportsAsync(cancellationToken).WithCancellation(cancellationToken))
+            await foreach (var raw in input.ReadReportsAsync(runToken)
+                               .WithCancellation(runToken).ConfigureAwait(false))
             {
                 bool changed = TryApply(raw.Bytes.Span);
                 if (!changed) continue;
                 MappingResult mapped = _mapper.Map(_accumulator.Current, _profile);
-                await output.WriteAsync(mapped.Gamepad, cancellationToken);
+                await output.WriteAsync(mapped.Gamepad, runToken).ConfigureAwait(false);
                 foreach (ConsumerAction action in mapped.ConsumerActions)
-                    await consumerEmitter.EmitAsync(action, cancellationToken);
+                    await consumerEmitter.EmitAsync(action, runToken).ConfigureAwait(false);
             }
         }
         catch (Exception ex) { runFailure = ex; }
 
-        try { await output.WriteAsync(VirtualGamepadState.Neutral, CancellationToken.None); }
+        try
+        {
+            await output.WriteAsync(VirtualGamepadState.Neutral, CancellationToken.None)
+                .ConfigureAwait(false);
+        }
         catch (Exception neutralFailure)
         {
             if (runFailure is null)
@@ -51,10 +73,10 @@ public sealed class ControllerBridge(
 
     public async ValueTask ApplyProfileAsync(ControllerMappingProfile profile, CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfDisposing();
         _profile = profile ?? throw new ArgumentNullException(nameof(profile));
         MappingResult mapped = _mapper.Map(_accumulator.Current, _profile);
-        await output.WriteAsync(mapped.Gamepad, cancellationToken);
+        await output.WriteAsync(mapped.Gamepad, cancellationToken).ConfigureAwait(false);
     }
 
     private bool TryApply(ReadOnlySpan<byte> report)
@@ -64,19 +86,36 @@ public sealed class ControllerBridge(
         return false;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        List<Exception>? failures = null;
-        try { await output.WriteAsync(VirtualGamepadState.Neutral); }
-        catch (Exception ex) { (failures ??= []).Add(ex); }
-        try { output.Dispose(); }
-        catch (Exception ex) { (failures ??= []).Add(ex); }
-        try { await input.DisposeAsync(); }
-        catch (Exception ex) { (failures ??= []).Add(ex); }
+        lock (_lifetimeGate)
+            return new(_disposeTask ??= DisposeCoreAsync());
+    }
 
-        if (failures is null) return;
+    private void ThrowIfDisposing()
+    {
+        lock (_lifetimeGate)
+            ObjectDisposedException.ThrowIf(_disposeTask is not null, this);
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        await _stop.CancelAsync().ConfigureAwait(false);
+        if (_runTask is not null)
+        {
+            try { await _runTask.ConfigureAwait(false); }
+            catch { /* The RunAsync caller owns the run result; cleanup must continue. */ }
+        }
+        List<Exception> failures = [];
+        try { await output.WriteAsync(VirtualGamepadState.Neutral).ConfigureAwait(false); }
+        catch (Exception ex) { failures.Add(ex); }
+        try { output.Dispose(); }
+        catch (Exception ex) { failures.Add(ex); }
+        try { await input.DisposeAsync().ConfigureAwait(false); }
+        catch (Exception ex) { failures.Add(ex); }
+        _stop.Dispose();
+
+        if (failures.Count == 0) return;
         if (failures.Count == 1)
             ExceptionDispatchInfo.Capture(failures[0]).Throw();
         throw new AggregateException("Controller bridge cleanup failed.", failures);

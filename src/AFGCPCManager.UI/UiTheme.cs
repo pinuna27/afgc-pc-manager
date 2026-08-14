@@ -473,7 +473,8 @@ public sealed class AfgcStatusBanner : Panel
     private readonly Label _message = new()
     {
         Dock = DockStyle.Fill,
-        AutoEllipsis = true,
+        AutoEllipsis = false,
+        AutoSize = false,
         TextAlign = ContentAlignment.MiddleLeft,
         Padding = new Padding(0),
         Font = UiTheme.BodyFont
@@ -482,7 +483,7 @@ public sealed class AfgcStatusBanner : Panel
 
     public AfgcStatusBanner()
     {
-        Height = 54;
+        Height = 68;
         Dock = DockStyle.Bottom;
         BackColor = UiTheme.Surface;
         Padding = new Padding(28, 0, 28, 0);

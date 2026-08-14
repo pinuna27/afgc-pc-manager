@@ -246,7 +246,7 @@ internal static class Program
         "add" => AddPreview(),
         "add-empty" => new AddControllerForm([]),
         "setup" => new SetupWizardForm([]),
-        "uninstall" => new UninstallForm(new DependencyUninstallOptions(false, false, false)),
+        "uninstall" => new UninstallForm(new DependencyUninstallOptions(false, false, false, false)),
         "uninstall-progress" => new UninstallProgressForm([], FakeUninstallAsync),
         _ => throw new ArgumentException($"Unknown UI surface '{surface}'.")
     };
@@ -293,14 +293,16 @@ internal static class Program
             [], true)
     ]);
 
-    private static async Task<int> FakeUninstallAsync(string[] _, Action<string>? progress)
+    private static async Task<UninstallExecutionResult> FakeUninstallAsync(
+        string[] _,
+        Action<string>? progress)
     {
         progress?.Invoke("Restoring physical controller visibility...");
         await Task.Delay(80);
         progress?.Invoke("Removing AFGC PC Manager application files...");
         await Task.Delay(80);
         progress?.Invoke("Removed 5 files.");
-        return 0;
+        return new(0, ControllerVisibilityOutcome.Restored);
     }
 
     private static string? Value(string[] args, string key)

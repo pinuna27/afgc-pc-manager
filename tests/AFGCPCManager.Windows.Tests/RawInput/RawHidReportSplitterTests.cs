@@ -12,6 +12,9 @@ public sealed class RawHidReportSplitterTests
         Assert.Equal([1, 2, 3], result[0]); Assert.Equal([4, 5, 6], result[1]);
     }
 
-    [Theory] [InlineData(0u, 1u)] [InlineData(3u, 0u)] [InlineData(4u, 2u)]
+    [Theory]
+    [InlineData(0u, 1u)]
+    [InlineData(3u, 0u)]
+    [InlineData(4u, 2u)]
     public void RejectsInvalidDimensions(uint size, uint count) => Assert.Empty(RawHidReportSplitter.Split(new byte[6], size, count));
 }

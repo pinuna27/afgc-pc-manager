@@ -30,7 +30,8 @@ public sealed class ApplicationUninstaller(JournalStore journalStore)
             foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
             {
                 string relative = Path.GetRelativePath(root, path);
-                if (!relative.Equals("install-journal.json", StringComparison.OrdinalIgnoreCase)
+                if (!relative.Equals(SetupProductIdentity.InstallJournalFileName,
+                        StringComparison.OrdinalIgnoreCase)
                     && !preserved.Contains(relative, StringComparer.OrdinalIgnoreCase))
                     preserved.Add(relative);
             }

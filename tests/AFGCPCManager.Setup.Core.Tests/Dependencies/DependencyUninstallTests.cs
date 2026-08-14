@@ -13,6 +13,7 @@ public sealed class DependencyUninstallTests
         Assert.True(options.UninstallVJoy);
         Assert.True(options.UninstallViGEmBus);
         Assert.False(options.UninstallHidHide);
+        Assert.False(options.RemoveApplicationData);
     }
 
     [Theory]

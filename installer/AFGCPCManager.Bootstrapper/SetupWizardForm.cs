@@ -1,4 +1,5 @@
 using AFGCPCManager.UI;
+using AFGCPCManager.Setup.Core;
 using System.Diagnostics;
 
 namespace AFGCPCManager.Bootstrapper;
@@ -6,6 +7,7 @@ namespace AFGCPCManager.Bootstrapper;
 internal sealed class SetupWizardForm : Form
 {
     private readonly string[] _originalArgs;
+    private readonly SetupExecutionContext _execution = new(cliMode: false);
     private readonly Label _heading = UiTheme.Heading(string.Empty, dialog: true);
     private readonly Label _description = UiTheme.Body(string.Empty, muted: true);
     private readonly TextBox _progress = new()
@@ -39,9 +41,7 @@ internal sealed class SetupWizardForm : Form
 
     public SetupWizardForm(string[] args)
     {
-        _originalArgs = args.Where(argument =>
-                !argument.Equals("--wizard-run", StringComparison.OrdinalIgnoreCase))
-            .ToArray();
+        _originalArgs = CommandLineArguments.Without(args, "--wizard-run");
         Text = "AFGC PC Manager Setup";
         ClientSize = new Size(780, 540);
         MinimumSize = new Size(660, 460);
@@ -62,7 +62,7 @@ internal sealed class SetupWizardForm : Form
         ShowWelcome();
         if (args.Any(argument => argument.Equals(
                 "--wizard-run", StringComparison.OrdinalIgnoreCase)))
-            Shown += async (_, _) => await BeginInstallAsync();
+            Shown += WizardShown;
         UiTheme.Apply(this);
     }
 
@@ -72,9 +72,8 @@ internal sealed class SetupWizardForm : Form
         _content.Controls.Clear();
         _heading.Text = OperationTitle();
         _description.Text = "Setup checks the app, vJoy, ViGEmBus, and HidHide and changes only the components that need attention.";
-        _destination.Text = Get(_originalArgs, "--install-dir")
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "AFGC PC Manager");
+        _destination.Text = CommandLineArguments.Get(_originalArgs, "--install-dir")
+            ?? SetupProductIdentity.DefaultInstallDirectory;
 
         var locationLabel = UiTheme.SectionHeading("Install location");
         locationLabel.Margin = new Padding(0, Px(22), 0, Px(6));
@@ -125,14 +124,25 @@ internal sealed class SetupWizardForm : Form
         _back.Enabled = false;
         _cancel.Enabled = false;
         ShowProgress();
-        Program.Progress = AppendProgress;
-        string[] args = WithDestination(_originalArgs, _destination.Text);
-        try { ResultCode = await Program.RunCoreAsync(args); }
-        finally { Program.Progress = null; _running = false; }
-        if (Program.DelegatedToElevatedWizard) { Close(); return; }
+        _execution.Progress = AppendProgress;
+        string[] args = CommandLineArguments.WithValue(
+            _originalArgs, "--install-dir", _destination.Text);
+        try { ResultCode = await Program.RunCoreAsync(args, _execution); }
+        finally { _execution.Progress = null; _running = false; }
+        if (_execution.DelegatedToElevatedWizard) { Close(); return; }
         if (ResultCode == 0) ShowComplete();
         else if (ResultCode == 3010) ShowRestart();
-        else ShowError(Program.LastError ?? "Setup could not complete.");
+        else ShowError(_execution.LastError ?? "Setup could not complete.");
+    }
+
+    private async void WizardShown(object? sender, EventArgs e)
+    {
+        try { await BeginInstallAsync(); }
+        catch (Exception ex)
+        {
+            ResultCode = 1;
+            ShowError($"Setup could not complete.\n\n{ex.Message}");
+        }
     }
 
     private void ShowProgress()
@@ -257,18 +267,6 @@ internal sealed class SetupWizardForm : Form
                 ? "Update AFGC PC Manager"
                 : "Install AFGC PC Manager";
 
-    private static string[] WithDestination(string[] args, string destination) =>
-        args.Contains("--install-dir", StringComparer.OrdinalIgnoreCase)
-            ? args
-            : [.. args, "--install-dir", destination];
-
-    private static string? Get(string[] args, string key)
-    {
-        int index = Array.FindIndex(args,
-            value => value.Equals(key, StringComparison.OrdinalIgnoreCase));
-        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
-    }
-
     private async void NextClicked(object? sender, EventArgs e)
     {
         try
@@ -277,10 +275,15 @@ internal sealed class SetupWizardForm : Form
             else if (_page == WizardPage.Restart)
             {
                 Process.Start(new ProcessStartInfo("shutdown.exe", "/r /t 0")
-                    { UseShellExecute = true });
+                { UseShellExecute = true });
                 Close();
             }
-            else if (_page is WizardPage.Complete or WizardPage.Error) Close();
+            else if (_page == WizardPage.Complete)
+            {
+                _execution.StartScheduledApplication();
+                Close();
+            }
+            else if (_page == WizardPage.Error) Close();
         }
         catch (Exception ex)
         {

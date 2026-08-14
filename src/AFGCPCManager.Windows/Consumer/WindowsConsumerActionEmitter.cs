@@ -66,7 +66,8 @@ public sealed class WindowsConsumerActionEmitter : IConsumerActionEmitter
     private enum InputType : uint { Mouse, Keyboard, Hardware }
     [StructLayout(LayoutKind.Sequential)] private readonly record struct KeyboardInput(ushort VirtualKey, ushort Scan, uint Flags, uint Time, nuint ExtraInfo);
     [StructLayout(LayoutKind.Explicit, Size = 32)] private struct InputUnion { [FieldOffset(0)] public KeyboardInput Keyboard; }
-    [StructLayout(LayoutKind.Sequential)] private struct Input
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Input
     {
         public InputType Type; public InputUnion Value;
         public Input(InputType type, KeyboardInput keyboard) { Type = type; Value = new() { Keyboard = keyboard }; }

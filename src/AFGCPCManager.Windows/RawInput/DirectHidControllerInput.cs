@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
 using AFGCPCManager.Core.Input;
@@ -17,8 +18,9 @@ public sealed class DirectHidControllerInput : IRawControllerInput
         new() { SingleReader = true, SingleWriter = false });
     private readonly List<FileStream> _streams = [];
     private readonly List<Task> _readers = [];
+    private readonly object _lifetimeGate = new();
     private int _failed;
-    private bool _disposed;
+    private Task? _disposeTask;
 
     public DirectHidControllerInput(IEnumerable<string> devicePaths)
     {
@@ -32,23 +34,31 @@ public sealed class DirectHidControllerInput : IRawControllerInput
         {
             foreach (string path in paths)
             {
-                SafeFileHandle handle = CreateFile(path, GenericRead, ShareRead | ShareWrite,
+                SafeFileHandle? handle = CreateFile(path, GenericRead, ShareRead | ShareWrite,
                     nint.Zero, OpenExisting, FileFlagOverlapped, nint.Zero);
-                if (handle.IsInvalid)
+                try
                 {
-                    int error = Marshal.GetLastWin32Error();
-                    handle.Dispose();
-                    throw new Win32Exception(error,
-                        "Could not open an allowlisted physical controller input endpoint.");
+                    if (handle.IsInvalid)
+                    {
+                        int error = Marshal.GetLastWin32Error();
+                        throw new Win32Exception(error,
+                            "Could not open an allowlisted physical controller input endpoint.");
+                    }
+                    var stream = new FileStream(handle, FileAccess.Read, 64, isAsync: true);
+                    handle = null; // FileStream now owns the SafeFileHandle.
+                    _streams.Add(stream);
+                    _readers.Add(ReadLoopAsync(stream, InputReportLengthForPath(path), _stop.Token));
                 }
-                var stream = new FileStream(handle, FileAccess.Read, 64, isAsync: true);
-                _streams.Add(stream);
-                _readers.Add(ReadLoopAsync(stream, InputReportLengthForPath(path), _stop.Token));
+                finally { handle?.Dispose(); }
             }
         }
         catch
         {
             _stop.Cancel();
+            try { Task.WhenAll(_readers).GetAwaiter().GetResult(); }
+            catch (Exception ex) when (ex is OperationCanceledException
+                or ObjectDisposedException)
+            { }
             foreach (FileStream stream in _streams) stream.Dispose();
             _stop.Dispose();
             throw;
@@ -58,9 +68,10 @@ public sealed class DirectHidControllerInput : IRawControllerInput
     public async IAsyncEnumerable<RawControllerReport> ReadReportsAsync(
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        lock (_lifetimeGate)
+            ObjectDisposedException.ThrowIf(_disposeTask is not null, this);
         await foreach (RawControllerReport report in _reports.Reader
-                           .ReadAllAsync(cancellationToken))
+                           .ReadAllAsync(cancellationToken).ConfigureAwait(false))
             yield return report;
     }
 
@@ -92,7 +103,7 @@ public sealed class DirectHidControllerInput : IRawControllerInput
             if (Interlocked.Exchange(ref _failed, 1) == 0)
             {
                 _reports.Writer.TryComplete(ex);
-                _stop.Cancel();
+                await _stop.CancelAsync().ConfigureAwait(false);
             }
         }
     }
@@ -100,23 +111,34 @@ public sealed class DirectHidControllerInput : IRawControllerInput
     internal static int InputReportLengthForPath(string path) =>
         path.Contains("&Col02", StringComparison.OrdinalIgnoreCase) ? 2 : 11;
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_disposed) return;
-        _disposed = true;
-        _stop.Cancel();
+        lock (_lifetimeGate)
+            return new(_disposeTask ??= DisposeCoreAsync());
+    }
+
+    private async Task DisposeCoreAsync()
+    {
+        await _stop.CancelAsync().ConfigureAwait(false);
+        List<Exception> failures = [];
+        try { await Task.WhenAll(_readers).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { failures.Add(ex); }
         foreach (FileStream stream in _streams)
         {
-            try { await stream.DisposeAsync(); }
-            catch { }
+            try { await stream.DisposeAsync().ConfigureAwait(false); }
+            catch (Exception ex) { failures.Add(ex); }
         }
-        try { await Task.WhenAll(_readers); }
-        catch { }
         _reports.Writer.TryComplete();
         _stop.Dispose();
+        if (failures.Count == 0) return;
+        if (failures.Count == 1)
+            ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("Controller input cleanup failed.", failures);
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
         nint security, uint creation, uint flags, nint template);
 }

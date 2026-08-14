@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -24,7 +25,8 @@ public sealed class FireControllerLightWriter
             {
                 if (_send(path, mask)) return true;
             }
-            catch
+            catch (Exception ex) when (ex is IOException
+                or UnauthorizedAccessException or Win32Exception)
             {
                 // A composite endpoint can disappear between discovery and this write.
                 // Continue trying the controller's remaining HID collections.
@@ -44,10 +46,12 @@ public sealed class FireControllerLightWriter
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern SafeFileHandle CreateFile(string name, uint access, uint share,
         nint security, uint creation, uint flags, nint template);
 
     [DllImport("hid.dll", SetLastError = true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool HidD_SetOutputReport(
         SafeFileHandle handle, byte[] report, int reportLength);

@@ -16,7 +16,7 @@ public sealed class ControllerBridgeTests
             new byte[] { 2, 0x10 }, new byte[] { 2, 0 }]);
         var output = new FakeOutput(); var consumer = new FakeConsumer();
         await using var bridge = new ControllerBridge(input, output, consumer, new ControllerMappingProfile());
-        await bridge.RunAsync();
+        await bridge.RunAsync(TestContext.Current.CancellationToken);
         Assert.Contains(output.States, s => s.LeftTrigger == 255 && s.IsButtonPressed(1));
         Assert.Contains(output.States, s => s.IsButtonPressed(11));
         Assert.Equal(VirtualGamepadState.Neutral, output.States[^1]);
@@ -28,7 +28,7 @@ public sealed class ControllerBridgeTests
         byte[] valid = [1, 128, 127, 128, 127, 0, 0, 1, 0, 0, 96];
         var input = new FakeInput([new byte[] { 99 }, valid, valid]); var output = new FakeOutput();
         await using var bridge = new ControllerBridge(input, output, new FakeConsumer(), new ControllerMappingProfile());
-        await bridge.RunAsync();
+        await bridge.RunAsync(TestContext.Current.CancellationToken);
         Assert.Equal(3, output.States.Count); // initial neutral, changed state, final neutral
     }
 
@@ -38,7 +38,7 @@ public sealed class ControllerBridgeTests
         var input = new FakeInput([new byte[] { 2, 0x08 }, new byte[] { 2, 0x08 }, new byte[] { 2, 0 }, new byte[] { 2, 0x08 }]);
         var consumer = new FakeConsumer();
         await using var bridge = new ControllerBridge(input, new FakeOutput(), consumer, new ControllerMappingProfile());
-        await bridge.RunAsync();
+        await bridge.RunAsync(TestContext.Current.CancellationToken);
         Assert.Equal([ConsumerAction.PlayPause, ConsumerAction.PlayPause], consumer.Actions);
     }
 
@@ -50,7 +50,8 @@ public sealed class ControllerBridgeTests
         await using var bridge = new ControllerBridge(input, output,
             new FakeConsumer(), new ControllerMappingProfile());
 
-        await Assert.ThrowsAsync<IOException>(() => bridge.RunAsync());
+        await Assert.ThrowsAsync<IOException>(() =>
+            bridge.RunAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains(output.States, state => state.IsButtonPressed(1));
         Assert.Equal(VirtualGamepadState.Neutral, output.States[^1]);
@@ -65,7 +66,7 @@ public sealed class ControllerBridgeTests
             new FakeConsumer(), new ControllerMappingProfile());
 
         AggregateException error = await Assert.ThrowsAsync<AggregateException>(
-            () => bridge.RunAsync());
+            () => bridge.RunAsync(TestContext.Current.CancellationToken));
 
         Assert.Contains(error.InnerExceptions,
             ex => ex is IOException { Message: "simulated disconnect failure" });
@@ -108,14 +109,48 @@ public sealed class ControllerBridgeTests
         Assert.True(input.Disposed);
     }
 
+    [Fact]
+    public async Task ConcurrentCleanupRunsEachResourceTeardownOnlyOnce()
+    {
+        var input = new FakeInput([]);
+        var output = new FakeOutput();
+        var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        await Task.WhenAll(Enumerable.Range(0, 32)
+            .Select(_ => bridge.DisposeAsync().AsTask()));
+
+        Assert.Equal(1, input.DisposeCalls);
+        Assert.Equal(1, output.DisposeCalls);
+    }
+
+    [Fact]
+    public async Task CleanupCancelsAndJoinsAnActiveRunBeforeDisposingOutput()
+    {
+        var input = new WaitingInput();
+        var output = new FakeOutput();
+        var bridge = new ControllerBridge(input, output,
+            new FakeConsumer(), new ControllerMappingProfile());
+        Task run = bridge.RunAsync(TestContext.Current.CancellationToken);
+        await input.Started.Task.WaitAsync(TestContext.Current.CancellationToken);
+
+        await bridge.DisposeAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => run);
+        Assert.Equal(1, output.DisposeCalls);
+        Assert.True(input.Disposed);
+    }
+
     private sealed class FakeInput(IEnumerable<byte[]> reports) : IRawControllerInput
     {
         public bool Disposed { get; private set; }
+        public int DisposeCalls { get; private set; }
         public bool ThrowOnDispose { get; init; }
         public async IAsyncEnumerable<RawControllerReport> ReadReportsAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)
         { foreach (byte[] report in reports) { cancellationToken.ThrowIfCancellationRequested(); yield return new(report); await Task.Yield(); } }
         public ValueTask DisposeAsync()
         {
+            DisposeCalls++;
             Disposed = true;
             return ThrowOnDispose
                 ? ValueTask.FromException(new IOException("simulated input cleanup failure"))
@@ -133,6 +168,24 @@ public sealed class ControllerBridgeTests
         }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
+    private sealed class WaitingInput : IRawControllerInput
+    {
+        public TaskCompletionSource Started { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool Disposed { get; private set; }
+        public async IAsyncEnumerable<RawControllerReport> ReadReportsAsync(
+            [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            yield break;
+        }
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
+    }
     private sealed class FakeOutput : IGamepadOutputSession
     {
         public uint DeviceId => 1; public List<VirtualGamepadState> States { get; } = [];
@@ -140,6 +193,7 @@ public sealed class ControllerBridgeTests
         public int? ThrowOnWriteCall { get; init; }
         public bool ThrowOnDispose { get; init; }
         public bool DisposeAttempted { get; private set; }
+        public int DisposeCalls { get; private set; }
         public ValueTask WriteAsync(VirtualGamepadState state, CancellationToken cancellationToken = default)
         {
             States.Add(state);
@@ -149,6 +203,7 @@ public sealed class ControllerBridgeTests
         }
         public void Dispose()
         {
+            DisposeCalls++;
             DisposeAttempted = true;
             if (ThrowOnDispose) throw new IOException("simulated output cleanup failure");
         }

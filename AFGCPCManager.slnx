@@ -16,10 +16,12 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/AFGCPCManager.App.Tests/AFGCPCManager.App.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.Bootstrapper.Tests/AFGCPCManager.Bootstrapper.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.Core.Tests/AFGCPCManager.Core.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.HidHide.Tests/AFGCPCManager.HidHide.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.HidVisibilityProbe.Tests/AFGCPCManager.HidVisibilityProbe.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.Setup.Core.Tests/AFGCPCManager.Setup.Core.Tests.csproj" />
+    <Project Path="tests/AFGCPCManager.Uninstaller.Tests/AFGCPCManager.Uninstaller.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.VJoy.Tests/AFGCPCManager.VJoy.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.ViGEm.Tests/AFGCPCManager.ViGEm.Tests.csproj" />
     <Project Path="tests/AFGCPCManager.Windows.Tests/AFGCPCManager.Windows.Tests.csproj" />
@@ -28,6 +30,7 @@
     <Project Path="tools/AFGCPCManager.UiPreview/AFGCPCManager.UiPreview.csproj" />
     <Project Path="tools/FireController.Capture/FireController.Capture.csproj" />
     <Project Path="tools/FireController.DeviceProbe/FireController.DeviceProbe.csproj" />
+    <Project Path="tools/FireController.RawInputTrace/FireController.RawInputTrace.csproj" />
     <Project Path="tools/ReleaseManifest.Builder/ReleaseManifest.Builder.csproj" />
     <Project Path="tools/ReleaseManifest.Signer/ReleaseManifest.Signer.csproj" />
     <Project Path="tools/ReleaseSigning.Keygen/ReleaseSigning.Keygen.csproj" />

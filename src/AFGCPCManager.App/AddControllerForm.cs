@@ -43,6 +43,14 @@ internal sealed class AddControllerForm : Form
             "Choose a connected controller to manage.",
             compact: true);
 
+        var pairingHint = new AfgcCallout(
+            "Hold the Home button on the controller for 10 seconds to enter pairing mode.")
+        {
+            Dock = DockStyle.Top,
+            Height = 58,
+            Margin = Padding.Empty
+        };
+
         var card = new AfgcCard { Dock = DockStyle.Fill, Padding = new Padding(1) };
         if (_list.Items.Count > 0)
         {
@@ -57,7 +65,8 @@ internal sealed class AddControllerForm : Form
             card.Controls.Add(new Label
             {
                 Text = "No unregistered Fire controllers are connected.\n\n" +
-                       "Wake or pair a controller, then reopen this window.",
+                       "Hold the Home button on the controller for 10 seconds " +
+                       "to enter pairing mode, then reopen this window.",
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleCenter,
                 ForeColor = UiTheme.TextMuted,
@@ -71,7 +80,20 @@ internal sealed class AddControllerForm : Form
             Padding = new Padding(24),
             BackColor = UiTheme.Canvas
         };
-        content.Controls.Add(card);
+        var body = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            Margin = Padding.Empty,
+            BackColor = UiTheme.Canvas
+        };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.Controls.Add(pairingHint, 0, 0);
+        body.Controls.Add(card, 0, 1);
+        content.Controls.Add(body);
 
         Controls.Add(content);
         Controls.Add(UiTheme.FormFooter(add, cancel));

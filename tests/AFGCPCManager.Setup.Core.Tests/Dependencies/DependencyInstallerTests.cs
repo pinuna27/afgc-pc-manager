@@ -18,4 +18,14 @@ public sealed class DependencyInstallerTests
         Assert.Equal(restartRequired, result.RestartRequired);
         Assert.Equal(code, result.ExitCode);
     }
+
+    [Fact]
+    public void RecognizesWindowsShutdownTerminationWithoutClaimingInstallSuccess()
+    {
+        DependencyInstallResult result = DependencyInstaller.InterpretExitCode(0x40010004);
+
+        Assert.False(result.Succeeded);
+        Assert.True(result.RestartRequired);
+        Assert.True(result.RestartInitiated);
+    }
 }

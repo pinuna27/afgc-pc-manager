@@ -44,7 +44,9 @@ public sealed class LocalReleaseBundleVerifierTests : IDisposable
         byte[] bytes = await File.ReadAllBytesAsync(archive, TestContext.Current.CancellationToken);
         var release = new ReleaseManifest
         {
-            Version = "1.2.3", Architecture = "x64", PublishedAtUtc = DateTimeOffset.UtcNow,
+            Version = "1.2.3",
+            Architecture = "x64",
+            PublishedAtUtc = DateTimeOffset.UtcNow,
             Assets = [new(Path.GetFileName(archive), Convert.ToHexString(SHA256.HashData(bytes)), bytes.Length)]
         };
         string manifest = Path.Combine(_root, "release-manifest.json"), signature = Path.Combine(_root, "release-manifest.sig");

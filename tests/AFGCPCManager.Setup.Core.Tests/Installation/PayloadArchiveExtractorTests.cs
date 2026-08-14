@@ -37,7 +37,8 @@ public sealed class PayloadArchiveExtractorTests : IDisposable
     private string Create(params (string Name, string Content)[] entries)
     {
         Directory.CreateDirectory(_root); string path = Path.Combine(_root, Guid.NewGuid() + ".zip"); using ZipArchive archive = ZipFile.Open(path, ZipArchiveMode.Create);
-        foreach (var item in entries) { using var writer = new StreamWriter(archive.CreateEntry(item.Name).Open()); writer.Write(item.Content); } return path;
+        foreach (var item in entries) { using var writer = new StreamWriter(archive.CreateEntry(item.Name).Open()); writer.Write(item.Content); }
+        return path;
     }
     public void Dispose() { if (Directory.Exists(_root)) Directory.Delete(_root, true); }
 }

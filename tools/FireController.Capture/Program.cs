@@ -15,7 +15,7 @@ internal static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
         using var writer = new StreamWriter(output, false, new UTF8Encoding(false))
-            { AutoFlush = true };
+        { AutoFlush = true };
         writer.WriteLine("utc_time,elapsed_ms,kind,step,label,device,report_hex");
 
         using var window = new RawInputWindow(writer);
@@ -122,7 +122,7 @@ internal sealed class GuidedCapture
 
             Console.WriteLine(result.SawChange
                 ? $"Captured ({result.ReportCount} reports)."
-                : "No change detected; continuing." );
+                : "No change detected; continuing.");
             Thread.Sleep(500);
             if (ConsumeRepeat())
             {

@@ -186,12 +186,45 @@ public sealed class UiSmokeTests
                 grid.Rows[1].Cells["Controller"].Value?.ToString());
             Assert.Equal("Xbox output 2", grid.Rows[0].Cells["Output"].Value);
             Assert.Equal("vJoy 7", grid.Rows[1].Cells["Output"].Value);
-            Assert.Equal("Needs ViGEmBus", grid.Rows[2].Cells["Status"].Value);
+            Assert.Equal("Starting...", grid.Rows[2].Cells["Status"].Value);
         }
         finally
         {
             await runtime.DisposeAsync();
         }
+    }
+
+    [Fact]
+    public async Task ControllerListKeepsReconnectInstructionShort()
+    {
+        var runtime = new BridgeRuntime();
+        try
+        {
+            using var main = new MainForm(runtime);
+            main.ApplyRows([
+                new ControllerRowModel("one", "First", 1, true, null,
+                    "Reconnect required: turn this controller off and back on once. " +
+                    "Virtual output is disabled until then.")
+            ]);
+
+            DataGridView grid = Assert.Single(Controls<DataGridView>(main));
+            Assert.Equal("Turn off, then on", grid.Rows[0].Cells["Status"].Value);
+        }
+        finally
+        {
+            await runtime.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public void AddControllerFormShowsPairingModeInstruction()
+    {
+        using var add = new AddControllerForm([]);
+
+        Assert.Contains(Controls<AfgcCallout>(add), callout =>
+            callout.Text.Contains(
+                "Hold the Home button on the controller for 10 seconds",
+                StringComparison.Ordinal));
     }
 
     [Theory]

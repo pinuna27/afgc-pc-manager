@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using AFGCPCManager.Setup.Core.Dependencies;
 using AFGCPCManager.Setup.Core.Installation;
+using AFGCPCManager.Setup.Core;
 using AFGCPCManager.Setup.Core.Models;
 
 namespace AFGCPCManager.Uninstaller;
@@ -10,21 +11,24 @@ internal static class Program
 {
     private const string DetachedArgument = "--detached";
     private const string BootstrapTempArgument = "--bootstrap-temp-dir";
+    private const int HidHideRecoveryNoChangesExitCode = 2;
     [STAThread]
     private static async Task<int> Main(string[] args)
     {
         try
         {
             args = WindowsResumeArguments.Expand(args);
-            string? detachedRoot = Get(args, DetachedArgument);
+            string? detachedRoot = CommandLineArguments.Get(args, DetachedArgument);
             if (detachedRoot is null)
             {
                 string root = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-                InstallationJournal journal = new JournalStore().LoadAsync(Path.Combine(root, "install-journal.json")).GetAwaiter().GetResult()
+                InstallationJournal journal = new JournalStore().LoadAsync(Path.Combine(
+                    root, SetupProductIdentity.InstallJournalFileName)).GetAwaiter().GetResult()
                     ?? throw new InvalidOperationException("Installation journal is missing or invalid.");
                 ApplicationConfiguration.Initialize();
                 using var form = new UninstallForm(DependencyUninstallOptions.FromJournal(journal));
-                if (form.ShowDialog() != DialogResult.OK) return 0;
+                if (form.ShowDialog() != DialogResult.OK)
+                    return 0;
                 string temporaryDirectory = Path.Combine(Path.GetTempPath(), $"AFGCPCManager.Uninstaller.{Guid.NewGuid():N}");
                 Directory.CreateDirectory(temporaryDirectory);
                 foreach (string source in Directory.EnumerateFiles(AppContext.BaseDirectory))
@@ -42,6 +46,7 @@ internal static class Program
                 if (form.Options.UninstallVJoy) elevatedArguments.Add("--remove-vjoy");
                 if (form.Options.UninstallViGEmBus) elevatedArguments.Add("--remove-vigembus");
                 if (form.Options.UninstallHidHide) elevatedArguments.Add("--remove-hidhide");
+                if (form.Options.RemoveApplicationData) elevatedArguments.Add("--remove-data");
                 try
                 {
                     using Process elevated = Elevation.StartAsAdministrator(temporary, elevatedArguments);
@@ -53,44 +58,81 @@ internal static class Program
                     throw;
                 }
             }
-            if (!Elevation.IsAdministrator()) return Elevation.RelaunchAsAdministrator(CurrentExecutable(), args);
-            if (Has(args, "--wizard-run"))
+            if (!Elevation.IsAdministrator())
+                return Elevation.RelaunchAsAdministrator(CurrentExecutable(), args);
+            if (CommandLineArguments.Has(args, "--wizard-run"))
             {
                 ApplicationConfiguration.Initialize();
                 using var progress = new UninstallProgressForm(args, ExecuteDetachedAsync);
-                Application.Run(progress); return progress.ResultCode;
+                Application.Run(progress);
+                return progress.ResultCode;
             }
-            return await ExecuteDetachedAsync(args);
+            return (await ExecuteDetachedAsync(args)).ExitCode;
         }
-        catch (Exception ex) { try { WindowsUninstallResumeRegistration.Unregister(); } catch { } MessageBox.Show($"Uninstall failed: {ex.Message}", "AFGC PC Manager", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+        catch (Exception ex)
+        {
+            try { WindowsUninstallResumeRegistration.Unregister(); }
+            catch (Exception cleanupError) when (cleanupError is IOException
+                                                  or UnauthorizedAccessException
+                                                  or System.Security.SecurityException)
+            { }
+            MessageBox.Show($"Uninstall failed: {ex.Message}", "AFGC PC Manager",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
     }
 
-    internal static async Task<int> ExecuteDetachedAsync(string[] args, Action<string>? progress = null)
+    internal static async Task<UninstallExecutionResult> ExecuteDetachedAsync(
+        string[] args,
+        Action<string>? progress = null)
     {
         try
         {
             using LifecycleFileLock lifecycle = LifecycleFileLock.Acquire();
-            string detachedRoot = Get(args, DetachedArgument) ?? throw new ArgumentException("The installed application path is missing.");
+            string detachedRoot = CommandLineArguments.Get(args, DetachedArgument)
+                ?? throw new ArgumentException("The installed application path is missing.");
             var continuationArguments = args.ToList();
-            bool removeVJoy = Has(args, "--remove-vjoy");
-            bool removeViGEmBus = Has(args, "--remove-vigembus");
-            bool removeHidHide = Has(args, "--remove-hidhide");
+            bool removeVJoy = CommandLineArguments.Has(args, "--remove-vjoy");
+            bool removeViGEmBus = CommandLineArguments.Has(args, "--remove-vigembus");
+            bool removeHidHide = CommandLineArguments.Has(args, "--remove-hidhide");
+            bool removeApplicationData = CommandLineArguments.Has(args, "--remove-data");
             string? continuationExecutable = removeVJoy || removeViGEmBus || removeHidHide
                 ? EnsureDurableContinuationCopy()
                 : null;
             string application = Path.Combine(detachedRoot, "AFGCPCManager.exe");
             bool hidHideInstalled = new WindowsDependencyDetector().Detect(DependencyId.HidHide).IsInstalled;
-            if (File.Exists(application) && hidHideInstalled)
+            ControllerVisibilityOutcome controllerVisibility;
+            if (File.Exists(application))
             {
-                Report("Restoring physical controller visibility...", progress);
-                using Process recovery = Process.Start(new ProcessStartInfo(application, "--recover-hidhide") { UseShellExecute = false }) ?? throw new InvalidOperationException("Could not start physical-controller recovery.");
+                Report("Restoring controller defaults...", progress);
+                string preparationArguments = hidHideInstalled
+                    ? "--reset-lights --recover-hidhide"
+                    : "--reset-lights";
+                using Process recovery = Process.Start(new ProcessStartInfo(
+                    application, preparationArguments)
+                { UseShellExecute = false }) ?? throw new InvalidOperationException(
+                    "Could not start controller cleanup.");
                 using var recoveryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
                 try { await recovery.WaitForExitAsync(recoveryTimeout.Token); }
                 catch (OperationCanceledException)
-                { throw new TimeoutException("Physical-controller recovery did not finish within 30 seconds; uninstall was stopped for safety."); }
-                if (recovery.ExitCode != 0) throw new InvalidOperationException("Physical-controller recovery failed; uninstall was stopped for safety.");
+                { throw new TimeoutException("Controller cleanup did not finish within 30 seconds; uninstall was stopped for safety."); }
+                controllerVisibility = !hidHideInstalled
+                    ? recovery.ExitCode == 0
+                        ? ControllerVisibilityOutcome.HidHideNotInstalled
+                        : throw new InvalidOperationException(
+                            "Controller cleanup failed; uninstall was stopped for safety.")
+                    : recovery.ExitCode switch
+                    {
+                        0 => ControllerVisibilityOutcome.Restored,
+                        HidHideRecoveryNoChangesExitCode => ControllerVisibilityOutcome.NoOwnedEntries,
+                        _ => throw new InvalidOperationException(
+                            "Physical-controller recovery failed; uninstall was stopped for safety.")
+                    };
             }
-            else if (!hidHideInstalled) Report("HidHide is not installed; physical controllers are already visible.", progress);
+            else if (!hidHideInstalled)
+            {
+                controllerVisibility = ControllerVisibilityOutcome.HidHideNotInstalled;
+            }
             else throw new InvalidOperationException(
                 "Physical-controller visibility cannot be restored because AFGCPCManager.exe is missing. Repair the application before uninstalling.");
             var dependencyUninstaller = new RegisteredDependencyUninstaller();
@@ -104,7 +146,17 @@ internal static class Program
                     DependencyId.VJoy, continuationArguments);
                 restartRequired |= removal.RestartRequired;
                 continuationArguments = removal.ContinuationArguments;
-                if (removal.RestartInitiated) return 3010;
+                if (removal.RestartInitiated) return new(3010, controllerVisibility, true);
+                DependencyState remainingVJoy = new WindowsDependencyDetector().Detect(DependencyId.VJoy);
+                if (VJoyResidualCleanup.CanClean(remainingVJoy))
+                {
+                    Report("Removing residue left by the vJoy vendor uninstaller...", progress);
+                    VJoyResidualCleanupResult cleanup = await VJoyResidualCleanup.CleanupAsync(remainingVJoy);
+                    restartRequired |= cleanup.RestartRequired;
+                    Report(cleanup.RestartRequired
+                        ? "The remaining vJoy driver will be removed after restart."
+                        : "The remaining vJoy service and driver were removed.", progress);
+                }
             }
             if (removeViGEmBus)
             {
@@ -113,7 +165,7 @@ internal static class Program
                     DependencyId.ViGEmBus, continuationArguments);
                 restartRequired |= removal.RestartRequired;
                 continuationArguments = removal.ContinuationArguments;
-                if (removal.RestartInitiated) return 3010;
+                if (removal.RestartInitiated) return new(3010, controllerVisibility, true);
             }
             if (removeHidHide)
             {
@@ -122,9 +174,10 @@ internal static class Program
                     DependencyId.HidHide, continuationArguments);
                 restartRequired |= removal.RestartRequired;
                 continuationArguments = removal.ContinuationArguments;
-                if (removal.RestartInitiated) return 3010;
+                if (removal.RestartInitiated) return new(3010, controllerVisibility, true);
             }
-            string journalPath = Path.Combine(detachedRoot, "install-journal.json");
+            string journalPath = Path.Combine(
+                detachedRoot, SetupProductIdentity.InstallJournalFileName);
             Report("Removing AFGC PC Manager application files...", progress);
             var journalStore = new JournalStore();
             InstallationJournal installedJournal = await journalStore.LoadAsync(journalPath)
@@ -153,10 +206,31 @@ internal static class Program
             CleanupDurableContinuation();
             Report($"Removed {result.RemovedFiles} files.", progress);
             if (result.PreservedFiles.Count > 0) Report($"Preserved {result.PreservedFiles.Count} modified or user-owned files.", progress);
-            return restartRequired ? 3010 : 0;
+            if (removeApplicationData)
+            {
+                Report("Removing settings, saved controllers, and diagnostic logs...", progress);
+                RemoveApplicationData();
+                Report("Removed AFGC PC Manager application data.", progress);
+            }
+            return new(restartRequired ? 3010 : 0, controllerVisibility);
         }
         catch { try { WindowsUninstallResumeRegistration.Unregister(); } catch { } throw; }
-        finally { CleanupBootstrapCopy(Get(args, BootstrapTempArgument)); }
+        finally
+        {
+            CleanupBootstrapCopy(CommandLineArguments.Get(args, BootstrapTempArgument));
+        }
+    }
+    private static void RemoveApplicationData()
+    {
+        string localData = Path.TrimEndingDirectorySeparator(Path.GetFullPath(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)));
+        string directory = Path.GetFullPath(Path.Combine(localData, "AFGC PC Manager"));
+        if (!directory.StartsWith(localData + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase)
+            || !Path.GetFileName(directory).Equals("AFGC PC Manager",
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The AFGC application-data directory could not be resolved safely.");
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
     }
     private static string EnsureDurableContinuationCopy()
     {
@@ -229,8 +303,6 @@ internal static class Program
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
     }
-    private static bool Has(string[] args, string key) => args.Contains(key, StringComparer.OrdinalIgnoreCase);
-    private static string? Get(string[] args, string key) { int index = Array.FindIndex(args, value => value.Equals(key, StringComparison.OrdinalIgnoreCase)); return index >= 0 && index + 1 < args.Length ? args[index + 1] : null; }
     private static string CurrentExecutable() => Environment.ProcessPath
         ?? throw new InvalidOperationException("The uninstaller executable path is unavailable.");
     private static void Report(string message, Action<string>? progress) { Console.WriteLine(message); progress?.Invoke(message); }

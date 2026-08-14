@@ -22,4 +22,4 @@ public sealed record PendingDependencyOperation(
     bool RestartRequired,
     DateTimeOffset? BootStartedAtUtc = null);
 
-public enum DependencyOperationPhase { Prepared, InstallerStarted, RestartRequired }
+public enum DependencyOperationPhase { Prepared, InstallerStarted, RestartRequired, DeferredUntilRestart }

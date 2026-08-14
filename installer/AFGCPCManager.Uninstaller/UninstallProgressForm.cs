@@ -6,7 +6,7 @@ namespace AFGCPCManager.Uninstaller;
 internal sealed class UninstallProgressForm : Form
 {
     private readonly string[] _args;
-    private readonly Func<string[], Action<string>?, Task<int>> _operation;
+    private readonly Func<string[], Action<string>?, Task<UninstallExecutionResult>> _operation;
     private readonly Label _heading = UiTheme.Heading(
         "Uninstalling AFGC PC Manager", dialog: true);
     private readonly Label _description = UiTheme.Body(
@@ -37,7 +37,7 @@ internal sealed class UninstallProgressForm : Form
     internal int ResultCode { get; private set; }
 
     public UninstallProgressForm(string[] args,
-        Func<string[], Action<string>?, Task<int>> operation)
+        Func<string[], Action<string>?, Task<UninstallExecutionResult>> operation)
     {
         _args = args;
         _operation = operation;
@@ -97,7 +97,12 @@ internal sealed class UninstallProgressForm : Form
 
     private async Task RunAsync()
     {
-        try { ResultCode = await _operation(_args, Append); }
+        UninstallExecutionResult? outcome = null;
+        try
+        {
+            outcome = await _operation(_args, Append);
+            ResultCode = outcome.ExitCode;
+        }
         catch (Exception ex)
         {
             ResultCode = 1;
@@ -110,9 +115,12 @@ internal sealed class UninstallProgressForm : Form
         if (ResultCode == 0)
         {
             _heading.Text = "Uninstall complete";
-            _description.Text = "AFGC PC Manager was removed successfully.";
+            _description.Text = "AFGC PC Manager was successfully uninstalled.";
             _result.Tone = AfgcCalloutTone.Info;
-            _result.Text = "Controller visibility was restored before application removal.";
+            string? controllerMessage = UninstallCompletionPresentation.ControllerMessage(
+                outcome!.ControllerVisibility);
+            _result.Visible = controllerMessage is not null;
+            _result.Text = controllerMessage;
             _primary.Text = "Finish";
             _primary.Enabled = true;
         }
@@ -121,7 +129,8 @@ internal sealed class UninstallProgressForm : Form
             _heading.Text = "Restart required";
             _description.Text = "Windows must restart to finish removing the selected components.";
             _result.Tone = AfgcCalloutTone.Warning;
-            _result.Text = "Pending cleanup will resume automatically after sign-in.";
+            _result.Text = UninstallCompletionPresentation.RestartMessage(
+                outcome!.ResumesAfterRestart);
             _primary.Text = "Restart now";
             _primary.Enabled = true;
             _secondary.Text = "Restart later";
@@ -153,7 +162,7 @@ internal sealed class UninstallProgressForm : Form
             try
             {
                 Process.Start(new ProcessStartInfo("shutdown.exe", "/r /t 0")
-                    { UseShellExecute = true });
+                { UseShellExecute = true });
             }
             catch (Exception ex)
             {

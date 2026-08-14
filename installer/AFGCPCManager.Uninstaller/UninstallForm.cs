@@ -20,9 +20,14 @@ internal sealed class UninstallForm : Form
         Text = "Also uninstall ViGEmBus",
         AutoSize = true
     };
+    private readonly CheckBox _applicationData = new()
+    {
+        Text = "Remove settings, saved controllers, and diagnostic logs",
+        AutoSize = true
+    };
 
     public DependencyUninstallOptions Options =>
-        new(_vjoy.Checked, _viGEmBus.Checked, _hidHide.Checked);
+        new(_vjoy.Checked, _viGEmBus.Checked, _hidHide.Checked, _applicationData.Checked);
 
     public UninstallForm(DependencyUninstallOptions defaults)
     {
@@ -32,6 +37,7 @@ internal sealed class UninstallForm : Form
         _vjoy.Checked = defaults.UninstallVJoy;
         _viGEmBus.Checked = defaults.UninstallViGEmBus;
         _hidHide.Checked = defaults.UninstallHidHide;
+        _applicationData.Checked = defaults.RemoveApplicationData;
 
         var remove = new AfgcButton("Uninstall", AfgcButtonKind.Danger)
         {
@@ -75,17 +81,29 @@ internal sealed class UninstallForm : Form
             Height = 68
         };
 
+        var dataHeading = UiTheme.SectionHeading("Application data");
+        dataHeading.Margin = new Padding(0, 20, 0, 8);
+        _applicationData.Margin = new Padding(0, 6, 0, 8);
+        var dataExplanation = UiTheme.Body(
+            "Leave this unchecked to keep your preferences and controller registrations for a future reinstall. Bluetooth pairing is never removed.",
+            muted: true);
+        dataExplanation.MaximumSize = new Size(560, 0);
+        dataExplanation.Margin = new Padding(0, 0, 0, 8);
+
         var layout = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
             AutoSize = true,
             AutoSizeMode = AutoSizeMode.GrowAndShrink,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 8,
             Padding = new Padding(26, 24, 26, 24),
             BackColor = UiTheme.Surface
         };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -96,6 +114,9 @@ internal sealed class UninstallForm : Form
         layout.Controls.Add(dependencyHeading, 0, 2);
         layout.Controls.Add(dependencies, 0, 3);
         layout.Controls.Add(warning, 0, 4);
+        layout.Controls.Add(dataHeading, 0, 5);
+        layout.Controls.Add(_applicationData, 0, 6);
+        layout.Controls.Add(dataExplanation, 0, 7);
 
         var scrollHost = new Panel
         {

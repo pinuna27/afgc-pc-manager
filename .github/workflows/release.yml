@@ -50,6 +50,7 @@ jobs:
 
       - name: Restore and test
         run: |
+          ./tools/Test-RepositoryStructure.ps1
           dotnet restore AFGCPCManager.slnx
           dotnet build AFGCPCManager.slnx --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
           dotnet test AFGCPCManager.slnx --configuration Release --no-build

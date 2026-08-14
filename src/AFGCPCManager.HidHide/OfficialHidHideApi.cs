@@ -7,7 +7,11 @@ internal sealed class OfficialHidHideApi : IHidHideApi
     private readonly HidHideControlService _service = new();
     public bool IsInstalled => _service.IsInstalled;
     public bool IsOperational => _service.IsOperational;
-    public bool IsActive { get => _service.IsActive; set => _service.IsActive = value; }
+    public bool IsActive
+    {
+        get => _service.IsActive;
+        set => _service.IsActive = value;
+    }
     public bool IsAppListInverted => _service.IsAppListInverted;
     public Version LocalDriverVersion => _service.LocalDriverVersion;
     public IReadOnlyCollection<string> ApplicationPaths => _service.ApplicationPaths.ToArray();

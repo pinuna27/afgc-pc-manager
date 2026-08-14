@@ -121,8 +121,8 @@ internal sealed class MainForm : Form
                 await RunUiActionAsync(() => OpenSettingsAsync(SelectedId), "save settings");
         };
 
-        runtime.StatusChanged += (_, value) => SetStatus(value);
-        runtime.ControllersChanged += (_, rows) => ApplyRows(rows);
+        runtime.StatusChanged += OnStatusChanged;
+        runtime.ControllersChanged += OnControllersChanged;
         FormClosing += (_, e) =>
         {
             if (e.CloseReason != CloseReason.UserClosing) return;
@@ -132,6 +132,22 @@ internal sealed class MainForm : Form
         UiTheme.Apply(this);
     }
 
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _runtime.StatusChanged -= OnStatusChanged;
+            _runtime.ControllersChanged -= OnControllersChanged;
+            _runtime.UpdatesAvailable -= OnUpdatesAvailable;
+        }
+        base.Dispose(disposing);
+    }
+
+    private void OnStatusChanged(object? sender, string value) => SetStatus(value);
+
+    private void OnControllersChanged(
+        object? sender, IReadOnlyList<ControllerRowModel> rows) => ApplyRows(rows);
+
     private void ConfigureControllerGrid()
     {
         UiTheme.StyleDataGrid(_controllers);
@@ -140,7 +156,7 @@ internal sealed class MainForm : Form
             Name = "Controller",
             HeaderText = "CONTROLLER",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 50,
+            FillWeight = 52,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -157,7 +173,7 @@ internal sealed class MainForm : Form
             Name = "Status",
             HeaderText = "STATUS",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 22,
+            FillWeight = 20,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -204,11 +220,12 @@ internal sealed class MainForm : Form
         {
             string state = row.IsConnected
                 ? row.Issue ?? (row.OutputDeviceId is null
-                    ? row.OutputMode == GamepadOutputMode.XInput
-                        ? "Needs ViGEmBus"
-                        : "Needs vJoy"
+                    ? "Starting..."
                     : "Connected")
                 : "Disconnected";
+            if (state.StartsWith("Reconnect required:",
+                    StringComparison.OrdinalIgnoreCase))
+                state = "Turn off, then on";
             int index = _controllers.Rows.Add(
                 $"Controller {row.RegistrationOrder}  ·  " +
                 VirtualControllerDisplayName.Format(row.DisplayName, row.OutputMode),

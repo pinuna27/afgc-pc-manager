@@ -6,12 +6,12 @@ namespace AFGCPCManager.App.Tests;
 public sealed class ControllerIdentificationLightManagerTests
 {
     [Fact]
-    public void DisabledModeNeverWritesIncludingAfterEnabledModeWasApplied()
+    public void DisablingTurnsAppliedPatternOffOnceThenStopsWriting()
     {
-        int writes = 0;
-        var manager = new ControllerIdentificationLightManager((_, _) =>
+        var masks = new List<byte>();
+        var manager = new ControllerIdentificationLightManager((_, mask) =>
         {
-            writes++;
+            masks.Add(mask);
             return true;
         });
         DiscoveredFireController device = Controller("one", "path");
@@ -19,8 +19,9 @@ public sealed class ControllerIdentificationLightManagerTests
 
         manager.Reconcile(true, [device], [registration], _ => { });
         manager.Reconcile(false, [device], [registration], _ => { });
+        manager.Reconcile(false, [device], [registration], _ => { });
 
-        Assert.Equal(1, writes);
+        Assert.Equal([(byte)0b1000, (byte)0], masks);
     }
 
     [Fact]
@@ -79,6 +80,27 @@ public sealed class ControllerIdentificationLightManagerTests
         Assert.Equal(2, events.Count);
         Assert.Contains("Could not apply", events[0]);
         Assert.Contains("Applied", events[1]);
+    }
+
+    [Fact]
+    public void UninstallResetTurnsOffOnlyConnectedRegisteredControllers()
+    {
+        var writes = new List<(string[] Paths, byte Mask)>();
+        var manager = new ControllerIdentificationLightManager((paths, mask) =>
+        {
+            writes.Add((paths.ToArray(), mask));
+            return true;
+        });
+        DiscoveredFireController registered = Controller("registered", "b", "a");
+        DiscoveredFireController unrelated = Controller("unrelated", "other");
+
+        ControllerIdentificationLightResetResult result = manager.ResetRegistered(
+            [registered, unrelated], [Registration("registered", 1)]);
+
+        (string[] paths, byte mask) = Assert.Single(writes);
+        Assert.Equal(["a", "b"], paths);
+        Assert.Equal(0, mask);
+        Assert.Equal(new ControllerIdentificationLightResetResult(1, 1), result);
     }
 
     private static DiscoveredFireController Controller(string id, params string[] paths) =>

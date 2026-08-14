@@ -3,6 +3,10 @@ using AFGCPCManager.Windows.Devices;
 
 namespace AFGCPCManager.App;
 
+internal sealed record ControllerIdentificationLightResetResult(
+    int Attempted,
+    int Succeeded);
+
 internal sealed class ControllerIdentificationLightManager
 {
     private readonly Func<IEnumerable<string>, byte, bool> _apply;
@@ -37,6 +41,23 @@ internal sealed class ControllerIdentificationLightManager
 
         if (!enabled)
         {
+            var devices = discovered.Where(controller => controller.IsConnected)
+                .ToDictionary(controller => controller.Identity.StableId,
+                    StringComparer.Ordinal);
+            foreach (string id in _applied.Keys.ToArray())
+            {
+                if (!devices.TryGetValue(id, out DiscoveredFireController? device))
+                    continue;
+
+                string[] paths = device.Endpoints.Select(endpoint => endpoint.DevicePath)
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray();
+                if (_apply(paths, 0))
+                    recordEvent("Turned off the controller identification lights; " +
+                        "the app will leave them alone until light control is enabled again.");
+                else
+                    recordEvent("Could not turn off the controller identification lights; " +
+                        "the app will leave them alone until light control is enabled again.");
+            }
             Clear();
             return;
         }
@@ -80,6 +101,35 @@ internal sealed class ControllerIdentificationLightManager
     {
         _applied.Clear();
         _failed.Clear();
+    }
+
+    public ControllerIdentificationLightResetResult ResetRegistered(
+        IReadOnlyList<DiscoveredFireController> discovered,
+        IReadOnlyList<RegisteredController> registered)
+    {
+        ArgumentNullException.ThrowIfNull(discovered);
+        ArgumentNullException.ThrowIfNull(registered);
+
+        HashSet<string> registeredIds = registered
+            .Select(controller => controller.StableId)
+            .ToHashSet(StringComparer.Ordinal);
+        int attempted = 0;
+        int succeeded = 0;
+        foreach (DiscoveredFireController controller in discovered.Where(controller =>
+                     controller.IsConnected
+                     && controller.Endpoints.Count > 0
+                     && registeredIds.Contains(controller.Identity.StableId)))
+        {
+            attempted++;
+            string[] paths = controller.Endpoints
+                .Select(endpoint => endpoint.DevicePath)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (_apply(paths, 0))
+                succeeded++;
+        }
+        Clear();
+        return new(attempted, succeeded);
     }
 
     private sealed record LightState(byte Mask, string EndpointSet);

@@ -189,7 +189,8 @@ public sealed class DependencyCoordinatorTests : IDisposable
         string journalPath = Path.Combine(_root, "install-journal.json");
         await new JournalStore().SaveAsync(journalPath, new InstallationJournal
         {
-            InstallDirectory = _root, Version = "1.0",
+            InstallDirectory = _root,
+            Version = "1.0",
             PendingDependencyOperation = new("HidHide", "1.5.230", "hidhide.exe", DependencyOperationPhase.RestartRequired, true)
         }, TestContext.Current.CancellationToken);
         var detector = new FakeDetector(new(DependencyId.HidHide, false));
@@ -210,7 +211,8 @@ public sealed class DependencyCoordinatorTests : IDisposable
         string journalPath = Path.Combine(_root, "install-journal.json");
         var journal = new InstallationJournal
         {
-            InstallDirectory = _root, Version = "1.0",
+            InstallDirectory = _root,
+            Version = "1.0",
             DependenciesInstalledBySetup = ["VJoy"],
             PendingDependencyOperation = new("VJoy", "2.2.2", "vjoy.exe", DependencyOperationPhase.RestartRequired, true)
         };
@@ -248,7 +250,8 @@ public sealed class DependencyCoordinatorTests : IDisposable
         string journalPath = Path.Combine(_root, "install-journal.json");
         var journal = new InstallationJournal
         {
-            InstallDirectory = _root, Version = "1.0",
+            InstallDirectory = _root,
+            Version = "1.0",
             PendingDependencyOperation = new("HidHide", "1.5.230", "hidhide.exe", DependencyOperationPhase.InstallerStarted, false)
         };
         await new JournalStore().SaveAsync(journalPath, journal, TestContext.Current.CancellationToken);
@@ -359,6 +362,85 @@ public sealed class DependencyCoordinatorTests : IDisposable
         Assert.Equal([DependencyId.VJoy, DependencyId.HidHide], installer.Calls);
     }
 
+    [Fact]
+    public async Task AcquiresEachInstallerOnlyImmediatelyBeforeItRunsAcrossRestart()
+    {
+        string journalPath = await CreateJournalAsync();
+        var detector = new MultiDetector();
+        var installer = new InitiatingRestartInstaller(detector);
+        DateTimeOffset boot = new(2026, 8, 14, 12, 0, 0, TimeSpan.Zero);
+        var packages = new Dictionary<DependencyId, Version>
+        {
+            [DependencyId.VJoy] = new(2, 2, 2),
+            [DependencyId.HidHide] = new(1, 5, 230)
+        };
+        var acquired = new List<DependencyId>();
+
+        Task<string> Acquire(DependencyId id, CancellationToken _)
+        {
+            acquired.Add(id);
+            return Task.FromResult(id == DependencyId.VJoy ? "vjoy.exe" : "hidhide.exe");
+        }
+
+        DependencyExecutionResult first = await new DependencyCoordinator(
+                detector, installer, new JournalStore(), bootStartedAt: () => boot)
+            .EnsureAsync(journalPath, packages, true, Acquire,
+                TestContext.Current.CancellationToken);
+
+        Assert.True(first.RestartRequired);
+        Assert.Equal([DependencyId.VJoy], acquired);
+
+        boot = boot.AddMinutes(10);
+        DependencyExecutionResult resumed = await new DependencyCoordinator(
+                detector, installer, new JournalStore(), bootStartedAt: () => boot)
+            .EnsureAsync(journalPath, packages, true, Acquire,
+                TestContext.Current.CancellationToken);
+
+        Assert.True(resumed.RestartRequired);
+        Assert.Equal([DependencyId.VJoy, DependencyId.HidHide], acquired);
+    }
+
+    [Fact]
+    public async Task DefersInstallerTerminatedByVendorInitiatedWindowsRestart()
+    {
+        string journalPath = await CreateJournalAsync();
+        var detector = new MultiDetector();
+        var installer = new ShutdownInterruptedBatchInstaller(detector);
+        DateTimeOffset boot = new(2026, 8, 12, 18, 0, 0, TimeSpan.Zero);
+        var packages = new Dictionary<DependencyId, (Version, string)>
+        {
+            [DependencyId.VJoy] = (new(2, 2, 2), "vjoy.exe"),
+            [DependencyId.HidHide] = (new(1, 5, 230), "hidhide.exe")
+        };
+
+        DependencyExecutionResult interrupted = await new DependencyCoordinator(
+                detector, installer, new JournalStore(), bootStartedAt: () => boot)
+            .EnsureAsync(journalPath, packages, true, TestContext.Current.CancellationToken);
+        InstallationJournal pending = (await new JournalStore().LoadAsync(
+            journalPath, TestContext.Current.CancellationToken))!;
+
+        Assert.True(interrupted.RestartRequired);
+        Assert.Equal([DependencyId.VJoy, DependencyId.HidHide], installer.Calls);
+        Assert.Contains("VJoy", pending.DependenciesInstalledBySetup);
+        Assert.DoesNotContain("HidHide", pending.DependenciesInstalledBySetup);
+        Assert.Equal("HidHide", pending.PendingDependencyOperation!.Dependency);
+        Assert.Equal(DependencyOperationPhase.DeferredUntilRestart, pending.PendingDependencyOperation.Phase);
+
+        DependencyExecutionResult sameBoot = await new DependencyCoordinator(
+                new ThrowingDetector(), installer, new JournalStore(), bootStartedAt: () => boot)
+            .EnsureAsync(journalPath, packages, true, TestContext.Current.CancellationToken);
+        Assert.True(sameBoot.RestartRequired);
+
+        boot = boot.AddMinutes(10);
+        DependencyExecutionResult resumed = await new DependencyCoordinator(
+                detector, installer, new JournalStore(), bootStartedAt: () => boot)
+            .EnsureAsync(journalPath, packages, true, TestContext.Current.CancellationToken);
+
+        Assert.True(resumed.RestartRequired);
+        Assert.True(detector.Installed[DependencyId.HidHide]);
+        Assert.Equal([DependencyId.VJoy, DependencyId.HidHide, DependencyId.HidHide], installer.Calls);
+    }
+
     [Theory]
     [InlineData(false, false, 2)]
     [InlineData(true, false, 1)]
@@ -448,6 +530,26 @@ public sealed class DependencyCoordinatorTests : IDisposable
             Calls.Add(dependency);
             detector.Installed[dependency] = true;
             return Task.FromResult(new DependencyInstallResult(true, true, 1641));
+        }
+    }
+    private sealed class ShutdownInterruptedBatchInstaller(MultiDetector detector) : IDependencyInstaller
+    {
+        public List<DependencyId> Calls { get; } = [];
+        private bool _interrupted;
+        public Task<DependencyInstallResult> RunInteractiveAsync(string installerPath,
+            CancellationToken cancellationToken = default)
+        {
+            DependencyId dependency = installerPath.Contains("vjoy", StringComparison.OrdinalIgnoreCase)
+                ? DependencyId.VJoy : DependencyId.HidHide;
+            Calls.Add(dependency);
+            if (dependency == DependencyId.HidHide && !_interrupted)
+            {
+                _interrupted = true;
+                return Task.FromResult(new DependencyInstallResult(false, true, 0x40010004,
+                    RestartInitiated: true));
+            }
+            detector.Installed[dependency] = true;
+            return Task.FromResult(new DependencyInstallResult(true, false, 0));
         }
     }
 }

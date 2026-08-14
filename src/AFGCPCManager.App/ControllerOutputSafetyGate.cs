@@ -64,14 +64,28 @@ internal sealed class ControllerOutputSafetyGate(
 
     private async Task<string?> TryUnhideAsync(string stableControllerId)
     {
-        try { await unhide(stableControllerId, CancellationToken.None); return null; }
-        catch (Exception ex) { return ex.Message; }
+        try
+        {
+            await unhide(stableControllerId, CancellationToken.None);
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
     }
 
     private static string? TryRelease(IGamepadOutputSession output)
     {
-        try { output.Dispose(); return null; }
-        catch (Exception ex) { return ex.Message; }
+        try
+        {
+            output.Dispose();
+            return null;
+        }
+        catch (Exception ex)
+        {
+            return ex.Message;
+        }
     }
 }
 

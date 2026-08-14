@@ -7,7 +7,13 @@ namespace AFGCPCManager.App;
 
 internal sealed class TrayApplicationContext : ApplicationContext
 {
-    private readonly BridgeRuntime _runtime = new(); private readonly MainForm _main; private readonly NotifyIcon _tray; private bool _exiting;
+    private readonly BridgeRuntime _runtime = new();
+    private readonly MainForm _main;
+    private readonly NotifyIcon _tray;
+    private readonly ContextMenuStrip _trayMenu;
+    private readonly Icon _trayIcon;
+    private bool _exiting;
+    private bool _resourcesDisposed;
     private IReadOnlyList<UpdateCheckResult.Available> _pendingUpdates = [];
     public TrayApplicationContext(bool automaticStart)
     {
@@ -17,8 +23,30 @@ internal sealed class TrayApplicationContext : ApplicationContext
         // thread target for BeginInvoke, and a later single-instance Show command
         // was silently dropped. Force the handle while still on the UI thread.
         _ = _main.Handle;
-        var menu = new ContextMenuStrip { Font = UiTheme.BodyFont, ShowImageMargin = false, BackColor = UiTheme.Surface, ForeColor = UiTheme.Text, Padding = new Padding(4) }; menu.Items.Add("Open AFGC PC Manager", null, (_, _) => ShowMain()); menu.Items.Add(new ToolStripSeparator()); menu.Items.Add("Exit", null, async (_, _) => await ExitAsync());
-        _tray = new NotifyIcon { Text = "AFGC PC Manager", Icon = AfgcIcon.CreateIcon(), Visible = false, ContextMenuStrip = menu }; _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowMain(); };
+        _trayMenu = new ContextMenuStrip
+        {
+            Font = UiTheme.BodyFont,
+            ShowImageMargin = false,
+            BackColor = UiTheme.Surface,
+            ForeColor = UiTheme.Text,
+            Padding = new Padding(4)
+        };
+        _trayMenu.Items.Add("Open AFGC PC Manager", null, (_, _) => ShowMain());
+        _trayMenu.Items.Add(new ToolStripSeparator());
+        _trayMenu.Items.Add("Exit", null, async (_, _) => await ExitAsync());
+        _trayIcon = AfgcIcon.CreateIcon();
+        _tray = new NotifyIcon
+        {
+            Text = "AFGC PC Manager",
+            Icon = _trayIcon,
+            Visible = false,
+            ContextMenuStrip = _trayMenu
+        };
+        _tray.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+                ShowMain();
+        };
         _tray.BalloonTipClicked += (_, _) => OpenPendingUpdate();
         _runtime.UpdatesAvailable += OnUpdatesAvailable;
         _main.SetStatus("Starting controller bridge...");
@@ -69,7 +97,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         UpdateCheckResult.Available? first = _pendingUpdates.FirstOrDefault();
         if (first is not null)
             Process.Start(new ProcessStartInfo(first.ReleasePage.AbsoluteUri)
-                { UseShellExecute = true });
+            { UseShellExecute = true });
     }
     private async Task InitializeAsync(bool automaticStart)
     {
@@ -83,7 +111,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
     }
     public void HandleCommand(InstanceCommand command)
     {
-        PostToUi(async () => { if (command == InstanceCommand.Show) { _tray.Visible = true; ShowMain(); } else await ExitAsync(); });
+        PostToUi(() =>
+        {
+            if (command == InstanceCommand.Show)
+            {
+                _tray.Visible = true;
+                ShowMain();
+            }
+            else
+            {
+                _ = ExitAsync();
+            }
+        });
     }
     private void ShowMain() { _main.Show(); _main.WindowState = FormWindowState.Normal; _main.Activate(); }
     private void PostToUi(Action action)
@@ -98,8 +137,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _exiting = true;
         _tray.Visible = false;
         try { await _runtime.DisposeAsync(); }
-        catch { }
-        finally { _tray.Dispose(); _main.Dispose(); ExitThread(); }
+        catch (Exception ex) { RuntimeEventLog.Write($"Shutdown cleanup failed: {ex}"); }
+        finally
+        {
+            DisposeUiResources();
+            ExitThread();
+        }
     }
     protected override void Dispose(bool disposing)
     {
@@ -108,11 +151,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
             if (!_exiting)
             {
                 _exiting = true;
-                try { _runtime.DisposeAsync().AsTask().GetAwaiter().GetResult(); } catch { }
+                try { _runtime.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
+                catch (Exception ex) { RuntimeEventLog.Write($"Shutdown cleanup failed: {ex}"); }
             }
-            _tray.Dispose();
-            _main.Dispose();
+            DisposeUiResources();
         }
         base.Dispose(disposing);
+    }
+
+    private void DisposeUiResources()
+    {
+        if (_resourcesDisposed)
+            return;
+        _resourcesDisposed = true;
+        _runtime.UpdatesAvailable -= OnUpdatesAvailable;
+        _tray.Dispose();
+        _trayMenu.Dispose();
+        _trayIcon.Dispose();
+        _main.Dispose();
     }
 }

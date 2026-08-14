@@ -73,4 +73,18 @@ public sealed class ViGEmBackendTests
         Assert.Equal(ViGEmStateConverter.Convert(VirtualGamepadState.Neutral), target.Reports[^1]);
         Assert.True(target.Disposed);
     }
+
+    [Fact]
+    public void BackendCannotInvalidateALiveNativeSession()
+    {
+        var client = new FakeViGEmClient();
+        var backend = new ViGEmBackend(client);
+        IGamepadOutputSession session = backend.TryAcquire()!;
+
+        backend.Dispose();
+        Assert.False(client.Disposed);
+
+        session.Dispose();
+        Assert.True(client.Disposed);
+    }
 }

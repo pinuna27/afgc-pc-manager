@@ -19,14 +19,22 @@ internal static class VJoyStateConverter
         AxisZ = checked((int)AxisScaler.ScaleTriggerByte(state.LeftTrigger, ranges[VirtualAxis.LeftTrigger])),
         AxisZRot = checked((int)AxisScaler.ScaleTriggerByte(state.RightTrigger, ranges[VirtualAxis.RightTrigger])),
         Buttons = (uint)(state.Buttons & 0x7ff),
-        Hats = ToPov(state.DPad), HatsEx1 = NeutralPov, HatsEx2 = NeutralPov, HatsEx3 = NeutralPov
+        Hats = ToPov(state.DPad),
+        HatsEx1 = NeutralPov,
+        HatsEx2 = NeutralPov,
+        HatsEx3 = NeutralPov
     };
 
     private static uint ToPov(DPadDirection direction) => direction switch
     {
-        DPadDirection.Up => 0, DPadDirection.UpRight => 4500, DPadDirection.Right => 9000,
-        DPadDirection.DownRight => 13500, DPadDirection.Down => 18000,
-        DPadDirection.DownLeft => 22500, DPadDirection.Left => 27000,
-        DPadDirection.UpLeft => 31500, _ => NeutralPov
+        DPadDirection.Up => 0,
+        DPadDirection.UpRight => 4500,
+        DPadDirection.Right => 9000,
+        DPadDirection.DownRight => 13500,
+        DPadDirection.Down => 18000,
+        DPadDirection.DownLeft => 22500,
+        DPadDirection.Left => 27000,
+        DPadDirection.UpLeft => 31500,
+        _ => NeutralPov
     };
 }

@@ -19,8 +19,22 @@ public sealed class DependencyCoordinator(
         string journalPath,
         IReadOnlyDictionary<DependencyId, (Version Target, string InstallerPath)> packages,
         bool allowUpdates,
+        CancellationToken cancellationToken = default) =>
+        await EnsureAsync(
+            journalPath,
+            packages.ToDictionary(item => item.Key, item => item.Value.Target),
+            allowUpdates,
+            (id, _) => Task.FromResult(packages[id].InstallerPath),
+            cancellationToken);
+
+    public async Task<DependencyExecutionResult> EnsureAsync(
+        string journalPath,
+        IReadOnlyDictionary<DependencyId, Version> packages,
+        bool allowUpdates,
+        Func<DependencyId, CancellationToken, Task<string>> acquireInstallerAsync,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(acquireInstallerAsync);
         InstallationJournal journal = await journalStore.LoadAsync(journalPath, cancellationToken)
             ?? throw new InvalidOperationException("The application installation journal is missing.");
         var plans = new List<DependencyPlan>();
@@ -33,7 +47,10 @@ public sealed class DependencyCoordinator(
                 $"The unfinished {pendingOperation.Dependency} driver operation is not present in this setup package.");
 
         if (journal.PendingDependencyOperation is
-                { Phase: DependencyOperationPhase.RestartRequired, BootStartedAtUtc: DateTimeOffset installedBoot }
+            {
+                Phase: DependencyOperationPhase.RestartRequired or DependencyOperationPhase.DeferredUntilRestart,
+                BootStartedAtUtc: DateTimeOffset installedBoot
+            }
             && Math.Abs((_bootStartedAt() - installedBoot).TotalSeconds) < 5)
         {
             // The pending operation represents the whole driver-installation batch. Do not
@@ -41,11 +58,14 @@ public sealed class DependencyCoordinator(
             return new(plans, true);
         }
 
-        foreach ((DependencyId id, (Version target, string installerPath)) in packages)
+        foreach ((DependencyId id, Version target) in packages)
         {
             DependencyState before = detector.Detect(id);
             bool pendingForDependency = journal.PendingDependencyOperation is
-                    { Phase: DependencyOperationPhase.InstallerStarted or DependencyOperationPhase.RestartRequired } pending
+            {
+                Phase: DependencyOperationPhase.InstallerStarted or DependencyOperationPhase.RestartRequired
+                        or DependencyOperationPhase.DeferredUntilRestart
+            } pending
                 && pending.Dependency.Equals(id.ToString(), StringComparison.OrdinalIgnoreCase);
             Version? pendingTarget = pendingForDependency
                 && Version.TryParse(journal.PendingDependencyOperation!.TargetVersion, out Version? parsedPendingTarget)
@@ -58,6 +78,14 @@ public sealed class DependencyCoordinator(
             {
                 journal.DependenciesInstalledBySetup.Add(id.ToString());
                 journal.DependenciesPresentBeforeSetup.Remove(id.ToString());
+                journal = journal with { PendingDependencyOperation = null };
+                await journalStore.SaveAsync(journalPath, journal, cancellationToken);
+            }
+            else if (pendingForDependency && journal.PendingDependencyOperation!.Phase
+                         == DependencyOperationPhase.DeferredUntilRestart)
+            {
+                // The previous boot ended while a later vendor installer was only
+                // beginning. Its state is now safe to re-plan from fresh detection.
                 journal = journal with { PendingDependencyOperation = null };
                 await journalStore.SaveAsync(journalPath, journal, cancellationToken);
             }
@@ -82,6 +110,10 @@ public sealed class DependencyCoordinator(
             if (!execute) continue;
 
             string name = DependencyNames.DisplayName(id);
+            string installerPath = await acquireInstallerAsync(id, cancellationToken);
+            if (string.IsNullOrWhiteSpace(installerPath))
+                throw new InvalidOperationException(
+                    $"The verified {name} installer path is missing.");
             progress?.Invoke(plan.Action switch
             {
                 DependencyAction.Install => $"Installing {name}... Follow the installer prompts.",
@@ -103,6 +135,22 @@ public sealed class DependencyCoordinator(
             await journalStore.SaveAsync(journalPath, journal, cancellationToken);
 
             DependencyInstallResult result = await installer.RunInteractiveAsync(installerPath, cancellationToken);
+            if (result.RestartInitiated && !result.Succeeded)
+            {
+                journal = journal with
+                {
+                    PendingDependencyOperation = journal.PendingDependencyOperation with
+                    {
+                        Phase = DependencyOperationPhase.DeferredUntilRestart,
+                        RestartRequired = true,
+                        BootStartedAtUtc = _bootStartedAt()
+                    }
+                };
+                await journalStore.SaveAsync(journalPath, journal, cancellationToken);
+                progress?.Invoke(
+                    $"Windows began restarting before {name} finished. Setup will safely retry it after sign-in.");
+                return new(plans, true);
+            }
             if (!result.Succeeded)
             {
                 DependencyState detectedAfterExit = detector.Detect(id);
@@ -139,7 +187,7 @@ public sealed class DependencyCoordinator(
                     : null
             };
             await journalStore.SaveAsync(journalPath, journal, cancellationToken);
-            if (result.ExitCode == 1641)
+            if (result.RestartInitiated || result.ExitCode == 1641)
                 return new(plans, true);
         }
 

@@ -125,6 +125,8 @@ public sealed class ControllerRegistry(SettingsDocument initial)
 
     private static SettingsDocument Clone(SettingsDocument value) => value with
     {
-        Controllers = value.Controllers.ToList(), ExcludedControllerIds = new(value.ExcludedControllerIds, StringComparer.Ordinal), Overrides = new(value.Overrides, StringComparer.Ordinal)
+        Controllers = value.Controllers.ToList(),
+        ExcludedControllerIds = new(value.ExcludedControllerIds, StringComparer.Ordinal),
+        Overrides = new(value.Overrides, StringComparer.Ordinal)
     };
 }

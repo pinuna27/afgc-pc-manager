@@ -66,7 +66,8 @@ a stable release. Unit tests do not replace this hardware test.
    new vJoy slot must be configured.
 3. Enable **Use controller identification lights**. Confirm the physical
    four-light patterns match the patterns shown in the controller list. Disable
-   it, power-cycle a controller, and confirm the app leaves its LEDs untouched.
+   it and confirm the controlled lights turn off immediately. Power-cycle a
+   controller and confirm the app then leaves its LEDs untouched.
 4. Disconnect and reconnect them in a different order. Confirm their saved vJoy
    numbers are reused when available.
 5. Keep another feeder application's vJoy device busy and confirm AFGC PC
@@ -98,3 +99,7 @@ a stable release. Unit tests do not replace this hardware test.
 7. Place a uniquely named user-owned file in the install directory, uninstall,
    and confirm the file is preserved. Confirm setup then refuses to claim the
    non-empty unowned directory; remove the test file and verify reinstall succeeds.
+8. Uninstall with **Remove settings, saved controllers, and diagnostic logs**
+   unchecked, reinstall, and confirm preferences and controller registrations
+   return. Uninstall again with it checked and confirm
+   `%LOCALAPPDATA%\AFGC PC Manager` is removed while Bluetooth pairing remains.

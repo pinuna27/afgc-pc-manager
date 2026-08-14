@@ -1,19 +1,14 @@
-using AFGCPCManager.App.Settings;
 using AFGCPCManager.Core.Bridge;
 using AFGCPCManager.Core.Devices;
+using AFGCPCManager.Core.Input;
 using AFGCPCManager.Core.Registration;
 using AFGCPCManager.Core.Settings;
 using AFGCPCManager.Core.Updates;
 using AFGCPCManager.Core.Output;
 using System.Diagnostics;
-using AFGCPCManager.VJoy;
 using AFGCPCManager.ViGEm;
 using AFGCPCManager.HidHide;
-using AFGCPCManager.Windows.Consumer;
 using AFGCPCManager.Windows.Devices;
-using AFGCPCManager.Windows.RawInput;
-using AFGCPCManager.Windows.Startup;
-using Microsoft.Win32;
 
 namespace AFGCPCManager.App;
 
@@ -21,25 +16,32 @@ internal sealed class BridgeRuntime : IAsyncDisposable
 {
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _mutation = new(1, 1);
-    private readonly Dictionary<string, RuntimeEntry> _controllers = [];
+    private readonly object _lifetimeGate = new();
+    private readonly Dictionary<string, ControllerRuntimeSession> _controllers = [];
     private readonly Dictionary<string, string> _controllerIssues = new(StringComparer.Ordinal);
     private readonly HashSet<string> _hiddenControllers = new(StringComparer.Ordinal);
     private readonly ControllerReconnectGate _reconnectGate = new();
-    private readonly ControllerIdentificationLightManager _identificationLights = new();
-    private readonly VJoyDirectInputNameManager _vjoyDisplayName = new();
-    private readonly OutputBackendCache _backends = new(mode => mode switch
-    {
-        GamepadOutputMode.DirectInput => new VJoyBackend(),
-        GamepadOutputMode.XInput => new ViGEmBackend(),
-        _ => throw new InvalidOperationException($"Unsupported output mode: {mode}.")
-    });
-    private readonly IFireControllerDiscovery _discovery = new FireControllerDiscovery();
-    private readonly ISettingsStore _settingsStore = new JsonSettingsStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "settings.json"));
-    private readonly HidHideService _hidHide = new(new DeviceInstanceResolver(), new HidHideJournalStore(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AFGC PC Manager", "hidhide-journal.json")));
+    private readonly ControllerIdentificationLightManager _identificationLights;
+    private readonly Func<IReadOnlyList<RegisteredController>, VJoyDisplayNameUpdate?>
+        _synchronizeVJoyDisplayName;
+    private readonly OutputBackendCache _backends;
+    private readonly IFireControllerDiscovery _discovery;
+    private readonly ISettingsStore _settingsStore;
+    private readonly IControllerHidingService _hidHide;
     private readonly ControllerOutputSafetyGate _outputSafetyGate;
-    private readonly WindowsStartupManager _startup = new();
-    private readonly HttpClient _updateClient = new() { Timeout = TimeSpan.FromSeconds(10) };
-    private ControllerRegistry? _registry; private IGamepadOutputBackend? _backend; private Task? _runTask;
+    private readonly IStartupRegistration _startup;
+    private readonly HttpClient _updateClient;
+    private readonly InstalledComponentReleaseSourceProvider _updateSources;
+    private readonly Func<int, CancellationToken, Task> _ensureVJoyCapacityAsync;
+    private readonly Func<IEnumerable<string>, IRawControllerInput> _createControllerInput;
+    private readonly IConsumerActionEmitter _consumerActions;
+    private readonly TimeProvider _timeProvider;
+    private ControllerRegistry? _registry;
+    private IGamepadOutputBackend? _backend;
+    private Task? _startTask;
+    private Task? _runTask;
+    private Task? _updateTask;
+    private Task? _disposeTask;
     private GamepadOutputMode? _backendMode;
     private IReadOnlyList<DiscoveredFireController> _lastDiscovery = [];
     private IReadOnlyList<ControllerRowModel> _lastRows = [];
@@ -51,8 +53,26 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     private HidHideAvailability _hidingAvailability = HidHideAvailability.NotInstalled;
     private int ConnectedDiscoveryCount => _lastDiscovery.Count(x => x.IsConnected && x.Endpoints.Count > 0);
 
-    public BridgeRuntime()
+    public BridgeRuntime() : this(BridgeRuntimeServices.CreateDefault())
     {
+    }
+
+    internal BridgeRuntime(BridgeRuntimeServices services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        _discovery = services.Discovery;
+        _settingsStore = services.SettingsStore;
+        _hidHide = services.ControllerHiding;
+        _startup = services.StartupRegistration;
+        _backends = services.OutputBackends;
+        _identificationLights = services.IdentificationLights;
+        _synchronizeVJoyDisplayName = services.SynchronizeVJoyDisplayName;
+        _ensureVJoyCapacityAsync = services.EnsureVJoyCapacityAsync;
+        _createControllerInput = services.CreateControllerInput;
+        _consumerActions = services.ConsumerActions;
+        _updateClient = services.UpdateClient;
+        _updateSources = services.UpdateSources;
+        _timeProvider = services.TimeProvider;
         _outputSafetyGate = new(
             (id, paths, app, cancellationToken) =>
                 _hidHide.HideAndVerifyAsync(id, paths, app, cancellationToken),
@@ -64,7 +84,16 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     public event EventHandler<IReadOnlyList<ControllerRowModel>>? ControllersChanged;
     public event EventHandler<IReadOnlyList<UpdateCheckResult.Available>>? UpdatesAvailable;
 
-    public async Task StartAsync()
+    public Task StartAsync()
+    {
+        lock (_lifetimeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeTask is not null, this);
+            return _startTask ??= StartCoreAsync();
+        }
+    }
+
+    private async Task StartCoreAsync()
     {
         try
         {
@@ -99,7 +128,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             }
             try
             {
-                string processPath = settings.Application.HidePhysicalControllers
+                string processPath = settings.Application.StartWithWindows
                     ? Environment.ProcessPath
                         ?? throw new InvalidOperationException("The application executable path is unavailable.")
                     : string.Empty;
@@ -114,7 +143,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                 ? "Waiting for an Amazon Fire Game Controller..."
                 : $"Found {ConnectedDiscoveryCount} Fire controller(s); starting virtual output...");
             _runTask = RunAsync();
-            if (settings.Application.AutomaticallyCheckForUpdates) _ = CheckUpdatesAsync();
+            if (settings.Application.AutomaticallyCheckForUpdates)
+                _updateTask = CheckUpdatesAsync();
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch (Exception ex) { SetStatus($"Not running — {ex.Message}"); }
@@ -202,7 +232,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         _lastDiscovery = await _discovery.SnapshotAsync(cancellationToken);
         SettingsDocument before = _registry!.Snapshot;
         bool changed = ControllerRegistrationReconciler.Reconcile(
-            _registry, _lastDiscovery, DateTimeOffset.UtcNow);
+            _registry, _lastDiscovery, _timeProvider.GetUtcNow());
         if (changed)
         {
             try { await _settingsStore.SaveAsync(_registry.Snapshot, cancellationToken); }
@@ -278,7 +308,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                          .ToArray())
             {
                 bool disconnected = !present.Contains(id);
-                RuntimeEntry runtime = _controllers[id];
+                ControllerRuntimeSession runtime = _controllers[id];
                 _controllers.Remove(id);
                 try { await runtime.DisposeAsync(); }
                 catch (Exception ex) { RecordEvent($"Could not release controller output {runtime.DeviceId}: {ex.Message}"); }
@@ -289,7 +319,11 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                 else RecordEvent($"Restarting controller {id[..Math.Min(12, id.Length)]} after its bridge stopped.");
             }
             int requiredOutputs = present.Count(id => settings.Controllers.Any(x => x.StableId == id));
-            if (requiredOutputs != _lastProvisioningTarget) { _lastProvisioningTarget = requiredOutputs; _failedProvisioningTarget = -1; }
+            if (requiredOutputs != _lastProvisioningTarget)
+            {
+                _lastProvisioningTarget = requiredOutputs;
+                _failedProvisioningTarget = -1;
+            }
             IReadOnlyList<OutputDeviceInfo> outputs = _backend!.EnumerateDevices();
             TrackHandleGrowth($"{OutputModeName(outputMode)} enumeration", ref previousHandleCount);
             _compatibleOutputDevices = outputs.Count(x => x.Capabilities is not null
@@ -300,13 +334,14 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             {
                 try
                 {
-                    await new VJoyDeviceProvisioner().EnsureCompatibleDeviceCountAsync(requiredOutputs, cancellationToken);
+                    await _ensureVJoyCapacityAsync(requiredOutputs, cancellationToken);
                     _compatibleOutputDevices = _backend.EnumerateDevices().Count(x => x.Capabilities is not null);
                     RecordEvent($"Expanded vJoy capacity to {_compatibleOutputDevices} compatible device(s).");
                 }
                 catch (Exception ex)
                 {
-                    _failedProvisioningTarget = requiredOutputs; setupRequired = true;
+                    _failedProvisioningTarget = requiredOutputs;
+                    setupRequired = true;
                     RecordEvent($"Could not provision {requiredOutputs} vJoy outputs: {ex.Message}");
                 }
             }
@@ -323,7 +358,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                              .Skip((int)ViGEmBackend.MaximumDeviceId)
                              .Select(item => item.Registration.StableId))
                 {
-                    if (!_controllers.Remove(overflowId, out RuntimeEntry? overflowRuntime))
+                    if (!_controllers.Remove(overflowId,
+                            out ControllerRuntimeSession? overflowRuntime))
                         continue;
                     try { await overflowRuntime.DisposeAsync(); }
                     catch (Exception ex)
@@ -355,6 +391,9 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                 uint? preferredOutput = outputMode == GamepadOutputMode.XInput
                     ? registration.PreferredXInputSlot
                     : registration.PreferredVJoyId;
+                string processPath = Environment.ProcessPath
+                    ?? throw new InvalidOperationException(
+                        "The application executable path is unavailable.");
                 var output = _backend.TryAcquire(preferredOutput);
                 TrackHandleGrowth($"{OutputModeName(outputMode)} acquisition", ref previousHandleCount);
                 if (output is null)
@@ -375,8 +414,6 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                         "Virtual output was withheld because no physical controller endpoints were available for hiding.");
                     continue;
                 }
-                string processPath = Environment.ProcessPath
-                    ?? throw new InvalidOperationException("The application executable path is unavailable.");
                 OutputSafetyAuthorization authorization = await _outputSafetyGate.AuthorizeAsync(
                     settings.Application.HidePhysicalControllers,
                     device.Identity.StableId, inputPaths, processPath, output, cancellationToken);
@@ -390,16 +427,25 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                         $"Virtual output was withheld because physical hiding was not verified: {authorization.Detail}");
                     continue;
                 }
-                DirectHidControllerInput input;
+                IRawControllerInput? input = null;
                 ControllerBridge bridge;
                 try
                 {
-                    input = new DirectHidControllerInput(inputPaths);
-                    bridge = new ControllerBridge(input, output, new WindowsConsumerActionEmitter(),
+                    input = _createControllerInput(inputPaths);
+                    bridge = new ControllerBridge(input, output, _consumerActions,
                         _registry.GetEffectiveMapping(device.Identity.StableId));
+                    input = null; // ControllerBridge now owns the input subscription.
                 }
                 catch
                 {
+                    if (input is not null)
+                    {
+                        try { await input.DisposeAsync().ConfigureAwait(false); }
+                        catch (Exception ex)
+                        {
+                            RecordEvent($"Could not release controller input after initialization failed: {ex.Message}");
+                        }
+                    }
                     await UnhideIfOwnedAsync(device.Identity.StableId, CancellationToken.None);
                     output.Dispose();
                     throw;
@@ -421,7 +467,10 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                         throw;
                     }
                 }
-                var runtime = new RuntimeEntry(bridge, output.DeviceId, device.Identity.ToRedactedString(), OnRuntimeStopped); _controllers.Add(device.Identity.StableId, runtime); runtime.Start();
+                var runtime = new ControllerRuntimeSession(
+                    bridge, output.DeviceId, device.Identity.ToRedactedString(), OnRuntimeStopped);
+                _controllers.Add(device.Identity.StableId, runtime);
+                runtime.Start();
                 _controllerIssues.Remove(device.Identity.StableId);
             }
             SetStatus(setupRequired ? "Setup required." : ConnectedDiscoveryCount == 0 ? "Waiting for an Amazon Fire Game Controller..." : $"Running — {_controllers.Count} of {ConnectedDiscoveryCount} Fire controller(s) mapped.");
@@ -447,65 +496,39 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     {
         try
         {
-            var sources = new List<ReleaseSource> { new(ReleaseComponent.AfgcPcManager, "pinuna27", "afgc-pc-manager", typeof(Program).Assembly.GetName().Version ?? new(0, 0)) };
-            Version? vjoy = DetectVJoyVersion(); if (vjoy is not null) sources.Add(new(ReleaseComponent.VJoy, "BrunnerInnovation", "vJoy", vjoy));
-            Version? vigem = DetectViGEmBusVersion(); if (vigem is not null) sources.Add(new(ReleaseComponent.ViGEmBus, "nefarius", "ViGEmBus", vigem));
-            Version? hidhide = null; try { hidhide = _hidHide.GetInstalledVersion(); } catch { } if (hidhide is not null) sources.Add(new(ReleaseComponent.HidHide, "nefarius", "HidHide", hidhide));
-            var checker = new GitHubReleaseChecker(_updateClient); UpdateCheckResult[] results = await Task.WhenAll(sources.Select(x => checker.CheckAsync(x, _stop.Token)));
+            Version applicationVersion = typeof(Program).Assembly.GetName().Version
+                ?? new Version(0, 0);
+            IReadOnlyList<ReleaseSource> sources = _updateSources.GetSources(applicationVersion);
+            var checker = new GitHubReleaseChecker(_updateClient);
+            UpdateCheckResult[] results = await Task.WhenAll(
+                sources.Select(source => checker.CheckAsync(source, _stop.Token)));
             var available = results.OfType<UpdateCheckResult.Available>().ToArray();
-            foreach (var failure in results.OfType<UpdateCheckResult.Failed>()) RecordEvent($"Update check failed for {failure.Component}: {failure.Message}");
-            if (available.Length > 0) { RecordEvent($"{available.Length} stable update(s) available."); UpdatesAvailable?.Invoke(this, available); }
-            else RecordEvent("Stable release update check completed; everything is current.");
+            foreach (UpdateCheckResult.Failed failure in results.OfType<UpdateCheckResult.Failed>())
+                RecordEvent($"Update check failed for {failure.Component}: {failure.Message}");
+            if (available.Length > 0)
+            {
+                RecordEvent($"{available.Length} stable update(s) available.");
+                UpdatesAvailable?.Invoke(this, available);
+            }
+            else
+            {
+                RecordEvent("Stable release update check completed; everything is current.");
+            }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch (Exception ex) { RecordEvent($"Update check failed: {ex.Message}"); }
     }
-    private static Version? DetectVJoyVersion()
-    {
-        string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        foreach (string path in new[] { Path.Combine(programFiles, "vJoy", "x64", "vJoyInterface.dll"), Path.Combine(programFiles, "vJoy", "vJoyInterface.dll") })
-            if (File.Exists(path) && Version.TryParse(FileVersionInfo.GetVersionInfo(path).FileVersion, out Version? version)) return version;
-        return null;
-    }
-    private static Version? DetectViGEmBusVersion()
-    {
-        var versions = new List<Version>();
-        foreach (RegistryView view in new[] { RegistryView.Registry64, RegistryView.Registry32 })
-        {
-            try
-            {
-                using RegistryKey machine = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view);
-                using RegistryKey? uninstall = machine.OpenSubKey(
-                    @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall");
-                if (uninstall is null) continue;
-                foreach (string childName in uninstall.GetSubKeyNames())
-                {
-                    using RegistryKey? child = uninstall.OpenSubKey(childName);
-                    string? name = child?.GetValue("DisplayName")?.ToString();
-                    if (name is null || !(name.Contains("ViGEm Bus Driver", StringComparison.OrdinalIgnoreCase)
-                        || name.Contains("Virtual Gamepad Emulation Bus Driver", StringComparison.OrdinalIgnoreCase)))
-                        continue;
-                    if (Version.TryParse(child?.GetValue("DisplayVersion")?.ToString(), out Version? version))
-                        versions.Add(version);
-                }
-            }
-            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
-            {
-                return null;
-            }
-        }
-        return versions.OrderDescending().FirstOrDefault();
-    }
     public async Task AddControllerAsync(string id)
     {
-        await _mutation.WaitAsync();
+        (Task waitTask, CancellationToken cancellationToken) = BeginOperation();
+        await waitTask.ConfigureAwait(false);
         try
         {
             var device = _lastDiscovery.FirstOrDefault(x => x.IsConnected && x.Endpoints.Count > 0 && x.Identity.StableId == id)
                 ?? throw new InvalidOperationException("That controller is no longer connected.");
             SettingsDocument before = _registry!.Snapshot;
-            _registry.Register(device.Identity, DateTimeOffset.UtcNow);
-            try { await _settingsStore.SaveAsync(_registry.Snapshot); }
+            _registry.Register(device.Identity, _timeProvider.GetUtcNow());
+            try { await _settingsStore.SaveAsync(_registry.Snapshot, cancellationToken).ConfigureAwait(false); }
             catch { _registry = new(before); throw; }
             PublishControllers();
         }
@@ -513,21 +536,22 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     }
     public async Task RemoveControllerAsync(string id)
     {
-        await _mutation.WaitAsync();
+        (Task waitTask, CancellationToken cancellationToken) = BeginOperation();
+        await waitTask.ConfigureAwait(false);
         try
         {
             SettingsDocument before = _registry!.Snapshot;
             if (_controllers.Remove(id, out var runtime))
             {
-                try { await runtime.DisposeAsync(); }
+                try { await runtime.DisposeAsync().ConfigureAwait(false); }
                 catch (Exception ex) { RecordEvent($"Could not release controller output {runtime.DeviceId}: {ex.Message}"); }
             }
-            await UnhideIfOwnedAsync(id, CancellationToken.None);
+            await UnhideIfOwnedAsync(id, cancellationToken).ConfigureAwait(false);
             _reconnectGate.Forget(id);
             _identificationLights.Forget(id);
             if (_registry.RemoveAndExclude(id))
             {
-                try { await _settingsStore.SaveAsync(_registry.Snapshot); }
+                try { await _settingsStore.SaveAsync(_registry.Snapshot, cancellationToken).ConfigureAwait(false); }
                 catch { _registry = new(before); throw; }
             }
             PublishControllers();
@@ -536,14 +560,15 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     }
     public async Task SaveSettingsAsync(SettingsDocument settings)
     {
-        await _mutation.WaitAsync();
+        (Task waitTask, CancellationToken cancellationToken) = BeginOperation();
+        await waitTask.ConfigureAwait(false);
         try
         {
             SettingsDocument before = _registry?.Snapshot ?? new();
             string processPath = Environment.ProcessPath
                 ?? throw new InvalidOperationException("The application executable path is unavailable.");
             _startup.SetEnabled(settings.Application.StartWithWindows, processPath);
-            try { await _settingsStore.SaveAsync(settings); }
+            try { await _settingsStore.SaveAsync(settings, cancellationToken).ConfigureAwait(false); }
             catch
             {
                 try { _startup.SetEnabled(before.Application.StartWithWindows, processPath); } catch { }
@@ -551,9 +576,22 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             }
 
             _registry = new(settings);
-            _identificationLights.Clear();
-            await DisposeAllControllersAsync();
-            if (before.Application.OutputMode != settings.Application.OutputMode)
+            bool outputModeChanged = before.Application.OutputMode !=
+                settings.Application.OutputMode;
+            bool bridgeRestartRequired = RequiresBridgeRestart(before, settings);
+
+            _identificationLights.Reconcile(
+                settings.Application.ControlIdentificationLights,
+                _lastDiscovery, settings.Controllers, RecordEvent);
+
+            // Preferences such as identification lights, startup, updates, and
+            // notifications do not invalidate a running virtual controller. In
+            // particular, avoid disconnecting and recreating a ViGEm target for
+            // a light-only save: the row would falsely claim that ViGEmBus was
+            // missing while the replacement target was still being acquired.
+            if (bridgeRestartRequired)
+                await DisposeAllControllersAsync().ConfigureAwait(false);
+            if (outputModeChanged)
             {
                 _backend = null;
                 _backendMode = null;
@@ -565,7 +603,7 @@ internal sealed class BridgeRuntime : IAsyncDisposable
             }
             if (before.Application.HidePhysicalControllers && !settings.Application.HidePhysicalControllers)
             {
-                await _hidHide.RecoverOwnedEntriesAsync();
+                await _hidHide.RecoverOwnedEntriesAsync(cancellationToken).ConfigureAwait(false);
                 _hiddenControllers.Clear();
                 _reconnectGate.Clear();
             }
@@ -574,12 +612,16 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         finally { _mutation.Release(); }
     }
 
+    internal static bool RequiresBridgeRestart(SettingsDocument before,
+        SettingsDocument after) =>
+        RuntimeSettingsChangePolicy.RequiresBridgeRestart(before, after);
+
     private async Task UnhideIfOwnedAsync(string id, CancellationToken cancellationToken)
     {
         if (!_hiddenControllers.Contains(id)) return;
         try
         {
-            await _hidHide.UnhideAsync(id, cancellationToken);
+            await _hidHide.UnhideAsync(id, cancellationToken).ConfigureAwait(false);
             _hiddenControllers.Remove(id);
         }
         catch (Exception ex) { RecordEvent($"Could not restore physical controller visibility: {ex.Message}"); }
@@ -587,19 +629,40 @@ internal sealed class BridgeRuntime : IAsyncDisposable
 
     private async Task DisposeAllControllersAsync()
     {
-        foreach ((string id, RuntimeEntry runtime) in _controllers.ToArray())
+        foreach ((string id, ControllerRuntimeSession runtime) in _controllers.ToArray())
         {
             _controllers.Remove(id);
-            try { await runtime.DisposeAsync(); }
+            try { await runtime.DisposeAsync().ConfigureAwait(false); }
             catch (Exception ex) { RecordEvent($"Could not release controller output {runtime.DeviceId}: {ex.Message}"); }
         }
     }
 
     private void PublishControllers()
     {
-        if (_registry is null) return; var present = _lastDiscovery.Where(x => x.IsConnected && x.Endpoints.Count > 0).Select(x => x.Identity.StableId).ToHashSet(StringComparer.Ordinal);
+        if (_registry is null)
+            return;
+        HashSet<string> present = _lastDiscovery
+            .Where(controller => controller.IsConnected && controller.Endpoints.Count > 0)
+            .Select(controller => controller.Identity.StableId)
+            .ToHashSet(StringComparer.Ordinal);
         SettingsDocument settings = _registry.Snapshot;
-        var rows = settings.Controllers.OrderBy(x => x.RegistrationOrder).Select(x => new ControllerRowModel(x.StableId, x.DisplayName, x.RegistrationOrder, present.Contains(x.StableId), _controllers.TryGetValue(x.StableId, out var runtime) ? runtime.DeviceId : null, _controllerIssues.GetValueOrDefault(x.StableId), settings.Application.ControlIdentificationLights ? ControllerIdentificationLightPattern.ForRegistrationOrder(x.RegistrationOrder) : null, settings.Application.OutputMode)).ToArray(); _lastRows = rows;
+        ControllerRowModel[] rows = settings.Controllers
+            .OrderBy(controller => controller.RegistrationOrder)
+            .Select(controller => new ControllerRowModel(
+                controller.StableId,
+                controller.DisplayName,
+                controller.RegistrationOrder,
+                present.Contains(controller.StableId),
+                _controllers.TryGetValue(controller.StableId,
+                    out ControllerRuntimeSession? runtime) ? runtime.DeviceId : null,
+                _controllerIssues.GetValueOrDefault(controller.StableId),
+                settings.Application.ControlIdentificationLights
+                    ? ControllerIdentificationLightPattern.ForRegistrationOrder(
+                        controller.RegistrationOrder)
+                    : null,
+                settings.Application.OutputMode))
+            .ToArray();
+        _lastRows = rows;
         ControllersChanged?.Invoke(this, rows);
     }
 
@@ -643,7 +706,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
     {
         try
         {
-            VJoyDisplayNameUpdate? update = _vjoyDisplayName.Synchronize(settings.Controllers);
+            VJoyDisplayNameUpdate? update =
+                _synchronizeVJoyDisplayName(settings.Controllers);
             if (update?.Changed == true)
                 RecordEvent($"Renamed the shared vJoy DirectInput device to '{update.Name}'.");
         }
@@ -658,36 +722,59 @@ internal sealed class BridgeRuntime : IAsyncDisposable
         GamepadOutputMode.DirectInput => "vJoy (DirectInput)",
         _ => mode.ToString()
     };
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        _stop.Cancel(); if (_runTask is not null) try { await _runTask; } catch (OperationCanceledException) { }
-        await DisposeAllControllersAsync();
-        foreach (string id in _hiddenControllers.ToArray()) await UnhideIfOwnedAsync(id, CancellationToken.None);
-        _backend = null;
-        _backends.Dispose();
-        _updateClient.Dispose(); _mutation.Dispose(); _stop.Dispose();
+        lock (_lifetimeGate)
+            return new(_disposeTask ??= DisposeCoreAsync());
     }
-    private sealed class RuntimeEntry(ControllerBridge bridge, uint deviceId, string id, Action<string, Exception?> stopped) : IAsyncDisposable
-    {
-        private readonly CancellationTokenSource _stop = new(); private Task? _task; public uint DeviceId { get; } = deviceId;
-        public bool IsCompleted => _task?.IsCompleted == true;
-        public void Start() => _task = RunAsync();
-        private async Task RunAsync() { try { await bridge.RunAsync(_stop.Token); stopped(id, null); } catch (OperationCanceledException) when (_stop.IsCancellationRequested) { } catch (Exception ex) { stopped(id, ex); } }
-        public async ValueTask DisposeAsync() { _stop.Cancel(); if (_task is not null) await _task; await bridge.DisposeAsync(); _stop.Dispose(); }
-    }
-}
 
-internal sealed record ControllerRowModel(string StableId, string DisplayName, int RegistrationOrder,
-    bool IsConnected, uint? OutputDeviceId, string? Issue,
-    byte? IdentificationLightMask = null,
-    GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput);
-internal sealed record DiagnosticSnapshot(string Version, string BridgeStatus, int RegisteredControllers, int ConnectedControllers, int CompatibleOutputDevices, IReadOnlyList<ControllerRowModel> Controllers, string HidingStatus, bool StartupEnabled, IReadOnlyList<string> RecentEvents, GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput)
-{
-    public string ToReport()
+    private (Task WaitTask, CancellationToken Token) BeginOperation()
     {
-        string outputName = OutputMode == GamepadOutputMode.XInput ? "Xbox (XInput)" : "vJoy (DirectInput)";
-        var lines = new List<string> { "AFGC PC Manager diagnostics", $"Version: {Version}", $"Bridge: {BridgeStatus}", $"Controllers: {ConnectedControllers} connected / {RegisteredControllers} registered", $"Virtual output: {outputName}", $"Compatible output slots: {CompatibleOutputDevices}", $"Physical hiding: {HidingStatus}", $"Start with Windows: {StartupEnabled}", "", "Controller assignments:" };
-        lines.AddRange(Controllers.Select(x => $"- Controller {x.RegistrationOrder} [{x.StableId[..Math.Min(12, x.StableId.Length)]}]: {(x.IsConnected ? "connected" : "disconnected")}, output {(x.OutputDeviceId?.ToString() ?? "none")}, lights {IdentificationLightDisplay.Format(x.IdentificationLightMask)}{(x.Issue is null ? string.Empty : $", issue: {x.Issue}")}"));
-        lines.Add(""); lines.Add("Recent events:"); lines.AddRange(RecentEvents.Select(x => $"- {x}")); return string.Join(Environment.NewLine, lines);
+        lock (_lifetimeGate)
+        {
+            ObjectDisposedException.ThrowIf(_disposeTask is not null, this);
+            CancellationToken token = _stop.Token;
+            return (_mutation.WaitAsync(token), token);
+        }
     }
+
+    private async Task DisposeCoreAsync()
+    {
+        await _stop.CancelAsync().ConfigureAwait(false);
+        Task? startTask = _startTask;
+        if (startTask is not null)
+            await IgnoreExpectedCancellationAsync(startTask).ConfigureAwait(false);
+        Task? runTask = _runTask;
+        if (runTask is not null)
+            await IgnoreExpectedCancellationAsync(runTask).ConfigureAwait(false);
+        Task? updateTask = _updateTask;
+        if (updateTask is not null)
+            await IgnoreExpectedCancellationAsync(updateTask).ConfigureAwait(false);
+
+        List<Exception> failures = [];
+        await _mutation.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await DisposeAllControllersAsync().ConfigureAwait(false);
+            foreach (string id in _hiddenControllers.ToArray())
+                await UnhideIfOwnedAsync(id, CancellationToken.None).ConfigureAwait(false);
+            _backend = null;
+            try { _backends.Dispose(); }
+            catch (Exception ex) { failures.Add(ex); }
+            try { _updateClient.Dispose(); }
+            catch (Exception ex) { failures.Add(ex); }
+        }
+        finally { _mutation.Release(); }
+        _mutation.Dispose();
+        _stop.Dispose();
+        if (failures.Count > 0)
+            throw new AggregateException("Runtime cleanup failed.", failures);
+    }
+
+    private async Task IgnoreExpectedCancellationAsync(Task task)
+    {
+        try { await task.ConfigureAwait(false); }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+
 }

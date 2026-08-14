@@ -1,61 +1,53 @@
 # AFGC PC Manager
 
-AFGC PC Manager is an unofficial Windows compatibility manager for the Amazon
-Fire TV Game Controller (2014, 1st gen). The controller appears in Windows
-Bluetooth as **Amazon Fire Game Controller**. AFGC PC Manager reads its complete
-Bluetooth HID reports—including the analog triggers that some Windows
-game-controller paths miss—and exposes a conventional, remapped controller
-as either an Xbox (XInput) or vJoy (DirectInput) device.
+AFGC PC Manager is an unofficial Windows app for using the first-generation
+Amazon Fire TV Game Controller as a standard Xbox (XInput) or vJoy
+(DirectInput) controller.
+
+The project started because several controller inputs do not work correctly on
+Windows, most importantly the analog triggers. AFGC PC Manager reads the
+controller directly and remaps its controls into a usable standard gamepad.
+
+It supports the controller's sticks, triggers, gamepad buttons, media buttons,
+Home button, Game Circle button, and identification lights.
+
+## Supported controller
+
+This project specifically supports the **Amazon Fire TV Game Controller (2014,
+1st generation)**:
+
+- Bluetooth HID model shown by Windows as **Amazon Fire Game Controller**
+- Hardware ID `VID 1949`, `PID 0402`
+- Three media buttons—Rewind, Play/Pause, and Fast Forward—along the lower front
+- Four white player/status lights and two replaceable AA batteries
+- No vibration motors; rumble is not available
+
+The redesigned 2015 second-generation Wi-Fi Direct controller is not supported.
 
 > [!WARNING]
-> This project is under active development. There is not yet a supported public
-> release or production installer. Do not treat builds from `main` as finished
-> end-user software.
+> This project is alpha software. Test releases may contain bugs, especially
+> around driver installation, restarts, and controller hiding.
 
-AFGC PC Manager executables are not currently Authenticode-signed. Windows may
-show an unknown-publisher or SmartScreen warning. Release-manifest signing
-protects update integrity but does not create Windows publisher reputation.
-Only download releases from this repository, and compare the setup file against
-the release's `SHA256SUMS.txt` before approving the Windows warning.
+## Install
 
-## Why this exists
+1. Download the latest setup file from this repository's **Releases** page.
+2. Run setup and follow its prompts. Setup installs the required controller
+   components and resumes automatically after a required restart.
+3. Open AFGC PC Manager and add your controller.
 
-Capable hardware should remain useful. The controller already sends its trigger
-data; AFGC PC Manager bridges the gap between those reports and software that
-expects a normal Windows game controller.
+To enter Bluetooth pairing mode, hold the controller's **Home** button for
+10 seconds. It appears in Windows as **Amazon Fire Game Controller**.
 
-## Intended behavior
+The uninstaller can optionally remove saved app data and controller components.
+It does not remove the controller's Bluetooth pairing.
 
-- Discover paired Amazon Fire Game Controllers automatically.
-- Decode gamepad, media, Home, and Game Circle inputs.
-- Preserve the measured stick centers and scale the full trigger ranges.
-- Let the user choose native Xbox (XInput) output through ViGEmBus (up to four
-  controllers) or vJoy (DirectInput) output for larger controller counts.
-- Optionally use HidHide to prevent duplicate input from the physical device.
-- Optionally assign stable four-LED identification patterns and show the same
-  patterns in the controller list; when disabled, the app sends no LED reports.
-- Support per-controller mappings and multiple controllers without taking vJoy
-  devices already owned by other feeder applications.
-- Manage stable application, vJoy, ViGEmBus, and HidHide updates while preserving
-  dependencies that were installed independently.
-- Offer verified, one-click Manager updates from the persistent main-window button
-  or the Windows update notification. The bundled setup downloads only releases
-  covered by the project's signed release manifest, then closes and reopens the app.
+AFGC PC Manager uses **ViGEmBus** for Xbox output, **vJoy** for DirectInput
+output, and **HidHide** to prevent duplicate input from the physical controller.
 
-## Requirements
+## Build
 
-- Windows 10 or Windows 11 x64
-- Bluetooth
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) for development
-- [vJoy](https://github.com/BrunnerInnovation/vJoy) for virtual controller output
-- [ViGEmBus](https://github.com/nefarius/ViGEmBus) for Xbox (XInput) output
-- [HidHide](https://github.com/nefarius/HidHide) for optional duplicate-input suppression
-
-The finished installer is designed to acquire verified, pinned dependency
-releases. During development, do not install or replace drivers merely to build
-or run the unit tests.
-
-## Build and test
+Development requires Windows 10 or 11 x64 and the
+[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
 
 ```powershell
 dotnet restore AFGCPCManager.slnx
@@ -63,66 +55,16 @@ dotnet build AFGCPCManager.slnx --no-restore
 dotnet test AFGCPCManager.slnx --no-build
 ```
 
-The solution can be opened directly in JetBrains Rider or Visual Studio.
+Hardware release candidates should also pass the
+[release validation checklist](docs/RELEASE_VALIDATION.md).
 
-## Repository layout
+## Project status
 
-- `src/` — application, shared UI system, controller logic, Windows transport,
-  vJoy, ViGEm, and HidHide
-- `installer/` — bootstrapper, uninstaller, verification, and installation logic
-- `tests/` — hardware-independent unit tests
-- `tools/` — controller capture/probe and release-signing utilities
-- `docs/` — implementation plan, code specification, and capture protocol
+OpenAI Codex was used to assist with the design, implementation, testing, and
+documentation of this project.
 
-The projects are separated so controller decoding and mapping remain testable
-without Bluetooth hardware or installed drivers.
+AFGC PC Manager is not affiliated with or endorsed by Amazon, Microsoft,
+Nefarius Software Solutions, or the vJoy maintainers.
 
-Hardware release candidates must also pass [the release-validation
-checklist](docs/RELEASE_VALIDATION.md), including trigger, HidHide, reboot,
-repair, uninstall, and multiple-controller tests on Windows.
-
-## Controller research tools
-
-The capture and probe tools are intentionally retained so results can be
-reproduced on other controller revisions. Captures can contain local device
-identifiers and are ignored by Git. Review and redact diagnostic output before
-sharing it publicly.
-
-## Contributing and security
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting changes. Please report
-security-sensitive installer, update, or device-hiding issues according to
-[SECURITY.md](SECURITY.md), not in a public issue.
-
-## Releases
-
-Release builds are created only from version tags by GitHub Actions. The
-workflow builds and tests the solution, publishes self-contained Windows x64
-executables, creates the application archive, signs the release manifest, and
-publishes SHA-256 checksums with the GitHub Release. Maintainers must configure the
-`AFGC_RELEASE_SIGNING_KEY` Actions secret; the corresponding public key is
-embedded in setup and committed under `installer/ReleaseSigning/`.
-
-A locally built release can be tested without publishing it by passing its
-signed bundle directly to setup:
-
-```powershell
-AFGCPCManager-Setup-x64.exe `
-  --apply-archive AFGCPCManager-x64.zip `
-  --version 0.1.0 `
-  --manifest release-manifest.json `
-  --signature release-manifest.sig
-```
-
-Setup verifies the manifest signature, version, archive size, and SHA-256 hash
-before extracting the payload. Dependency installers are still downloaded only
-from the official release URLs pinned by that trusted manifest.
-
-## License and trademarks
-
-AFGC PC Manager is available under the [MIT License](LICENSE). Third-party
-components retain their own licenses.
-
-This project is not affiliated with or endorsed by Amazon, Microsoft, Nintendo,
-Nefarius Software Solutions, or the vJoy maintainers. Product names and
-trademarks belong to their respective owners.
+Licensed under the [MIT License](LICENSE). Security issues should be reported
+according to [SECURITY.md](SECURITY.md).

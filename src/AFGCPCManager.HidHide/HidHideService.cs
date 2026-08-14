@@ -2,6 +2,16 @@ namespace AFGCPCManager.HidHide;
 
 public sealed record HidHideDependencyStatus(bool Installed, bool Operational, Version? Version);
 
+public sealed record HidHideRecoveryResult(
+    int RemovedDeviceInstanceIds,
+    int RemovedApplicationPaths,
+    bool DeactivatedByApplication)
+{
+    public bool Changed => RemovedDeviceInstanceIds > 0
+        || RemovedApplicationPaths > 0
+        || DeactivatedByApplication;
+}
+
 public static class HidHideDependencyProbe
 {
     public static HidHideDependencyStatus Detect()
@@ -17,7 +27,8 @@ public sealed class HidHideService
     public HidHideService(IDeviceInstanceResolver resolver, HidHideJournalStore store) : this(
         new OfficialHidHideApi(), resolver, store,
         new ProcessHidHideVisibilityVerifier(Path.Combine(
-            AppContext.BaseDirectory, "AFGCPCManager.HidVisibilityProbe.exe"))) { }
+            AppContext.BaseDirectory, "AFGCPCManager.HidVisibilityProbe.exe")))
+    { }
     internal HidHideService(IHidHideApi api, IDeviceInstanceResolver resolver,
         HidHideJournalStore store, IHidHideVisibilityVerifier? visibilityVerifier = null) =>
         (_api, _resolver, _store, _visibilityVerifier) = (api, resolver, store, visibilityVerifier);
@@ -221,20 +232,36 @@ public sealed class HidHideService
         finally { _gate.Release(); }
     }
 
-    public async Task RecoverOwnedEntriesAsync(CancellationToken cancellationToken = default)
+    public async Task<HidHideRecoveryResult> RecoverOwnedEntriesAsync(
+        CancellationToken cancellationToken = default)
     {
         await _gate.WaitAsync(cancellationToken);
         try
         {
             HidHideJournal journal = await _store.LoadAsync(cancellationToken);
             var blocked = _api.BlockedInstanceIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (string id in journal.AddedDeviceInstanceIds.Values.SelectMany(x => x).Distinct(StringComparer.OrdinalIgnoreCase)) if (blocked.Contains(id)) _api.RemoveBlockedInstanceId(id);
+            int removedDeviceInstanceIds = 0;
+            foreach (string id in journal.AddedDeviceInstanceIds.Values
+                         .SelectMany(x => x)
+                         .Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!blocked.Contains(id)) continue;
+                _api.RemoveBlockedInstanceId(id);
+                removedDeviceInstanceIds++;
+            }
             IReadOnlyCollection<string> apps = _api.ApplicationPaths;
+            int removedApplicationPaths = 0;
             foreach (string path in journal.AddedApplicationPaths)
-                if (ApplicationPathIdentity.Contains(apps, path)) _api.RemoveApplicationPath(path);
-            if (journal.ActivatedByApplication && _api.IsActive)
+            {
+                if (!ApplicationPathIdentity.Contains(apps, path)) continue;
+                _api.RemoveApplicationPath(path);
+                removedApplicationPaths++;
+            }
+            bool deactivated = journal.ActivatedByApplication && _api.IsActive;
+            if (deactivated)
                 _api.IsActive = false;
             await _store.SaveAsync(new(), cancellationToken);
+            return new(removedDeviceInstanceIds, removedApplicationPaths, deactivated);
         }
         finally { _gate.Release(); }
     }
