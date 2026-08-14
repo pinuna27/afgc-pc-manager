@@ -96,7 +96,7 @@ jobs:
           } | Set-Content artifacts/release/SHA256SUMS.txt -Encoding ascii
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: AFGC-PC-Manager-${{ steps.version.outputs.version }}
           path: artifacts/release/*
