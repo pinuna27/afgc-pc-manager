@@ -17,7 +17,7 @@ public sealed class PhysicalStateAccumulator
             RightTrigger = report.RightTrigger,
             Buttons = report.Buttons,
             DPad = report.DPad,
-            BatteryCandidate = report.BatteryCandidate
+            BatteryPercentage = report.BatteryPercentage
         };
         return Replace(next);
     }

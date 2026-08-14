@@ -18,6 +18,16 @@ public sealed class ControllerBridge(
     private ControllerMappingProfile _profile = profile ?? throw new ArgumentNullException(nameof(profile));
     private Task? _runTask;
     private Task? _disposeTask;
+    private int _batteryPercentage = -1;
+
+    public byte? BatteryPercentage
+    {
+        get
+        {
+            int percentage = Volatile.Read(ref _batteryPercentage);
+            return percentage < 0 ? null : (byte)percentage;
+        }
+    }
 
     public Task RunAsync(CancellationToken cancellationToken = default)
     {
@@ -81,9 +91,21 @@ public sealed class ControllerBridge(
 
     private bool TryApply(ReadOnlySpan<byte> report)
     {
-        if (FireReportDecoder.TryDecodeGamepad(report, out var gamepad)) return _accumulator.Apply(gamepad);
+        if (FireReportDecoder.TryDecodeGamepad(report, out var gamepad))
+        {
+            PublishBatteryPercentage(gamepad.BatteryPercentage);
+            return _accumulator.Apply(gamepad);
+        }
         if (FireReportDecoder.TryDecodeConsumer(report, out var consumer)) return _accumulator.Apply(consumer);
         return false;
+    }
+
+    private void PublishBatteryPercentage(byte percentage)
+    {
+        if (percentage > 100 || Volatile.Read(ref _batteryPercentage) == percentage)
+            return;
+
+        Volatile.Write(ref _batteryPercentage, percentage);
     }
 
     public ValueTask DisposeAsync()

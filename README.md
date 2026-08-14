@@ -9,7 +9,8 @@ Windows, most importantly the analog triggers. AFGC PC Manager reads the
 controller directly and remaps its controls into a usable standard gamepad.
 
 It supports the controller's sticks, triggers, gamepad buttons, media buttons,
-Home button, Game Circle button, and identification lights.
+Home button, Game Circle button, identification lights, and reported battery
+level.
 
 ## Supported controller
 

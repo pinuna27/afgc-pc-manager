@@ -88,7 +88,7 @@ public sealed class FireReportDecoderTests
         Assert.Equal(64, decoded.RightX);
         Assert.Equal(192, decoded.RightY);
         Assert.Equal(DPadDirection.DownRight, decoded.DPad);
-        Assert.Equal(96, decoded.BatteryCandidate);
+        Assert.Equal(96, decoded.BatteryPercentage);
         Assert.True(decoded.Buttons.HasFlag(FireButtons.A));
         Assert.True(decoded.Buttons.HasFlag(FireButtons.B));
         Assert.True(decoded.Buttons.HasFlag(FireButtons.X));

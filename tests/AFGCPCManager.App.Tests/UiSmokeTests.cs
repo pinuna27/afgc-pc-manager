@@ -108,12 +108,16 @@ public sealed class UiSmokeTests
         {
             using var main = new MainForm(runtime);
             main.ApplyRows([
-                new ControllerRowModel("one", "First", 1, true, 2, null, 0b0101),
+                new ControllerRowModel("one", "First", 1, true, 2, null, 0b0101,
+                    BatteryPercentage: 94),
                 new ControllerRowModel("two", "Second", 2, false, null, null, null)
             ]);
 
             DataGridView grid = Assert.Single(Controls<DataGridView>(main));
             Assert.False(grid.ShowCellToolTips);
+            Assert.Equal("94%", grid.Rows[0].Cells["Battery"].Value);
+            Assert.Equal(BatteryLevelDisplay.Unavailable,
+                grid.Rows[1].Cells["Battery"].Value);
             Assert.Equal("— ■ — ■", grid.Rows[0].Cells["Lights"].Value);
             Assert.Equal("Not controlled", grid.Rows[1].Cells["Lights"].Value);
             DataGridViewColumn lightsColumn = Assert.IsType<DataGridViewTextBoxColumn>(grid.Columns["Lights"]);
@@ -124,6 +128,18 @@ public sealed class UiSmokeTests
             await runtime.DisposeAsync();
         }
     }
+
+    [Theory]
+    [InlineData(null, "—")]
+    [InlineData(0, "0%")]
+    [InlineData(25, "25%")]
+    [InlineData(94, "94%")]
+    [InlineData(100, "100%")]
+    [InlineData(101, "—")]
+    public void BatteryDisplayAcceptsOnlyProtocolPercentageRange(
+        int? percentage, string expected) =>
+        Assert.Equal(expected, BatteryLevelDisplay.Format(
+            percentage is int value ? (byte)value : null));
 
     [Fact]
     public async Task RightClickSelectsControllerAndSelectionSurvivesRefresh()
@@ -180,9 +196,13 @@ public sealed class UiSmokeTests
             ]);
 
             DataGridView grid = Assert.Single(Controls<DataGridView>(main));
-            Assert.Contains("Xbox pad (XInput)",
+            Assert.Contains("Xbox pad",
                 grid.Rows[0].Cells["Controller"].Value?.ToString());
-            Assert.Contains("DirectInput pad (DirectInput)",
+            Assert.DoesNotContain("(XInput)",
+                grid.Rows[0].Cells["Controller"].Value?.ToString());
+            Assert.Contains("DirectInput pad",
+                grid.Rows[1].Cells["Controller"].Value?.ToString());
+            Assert.DoesNotContain("(DirectInput)",
                 grid.Rows[1].Cells["Controller"].Value?.ToString());
             Assert.Equal("Xbox output 2", grid.Rows[0].Cells["Output"].Value);
             Assert.Equal("vJoy 7", grid.Rows[1].Cells["Output"].Value);

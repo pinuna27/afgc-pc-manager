@@ -35,7 +35,7 @@ internal static class Program
                 Console.WriteLine($"Readable feature reports: {result.FeatureReports.Count}");
                 SaveBatterySnapshot(inputReport);
                 if (inputReport.Length > 10)
-                    Console.WriteLine($"Battery/status candidate (input byte 10): 0x{inputReport[10]:X2} ({inputReport[10]})");
+                    Console.WriteLine($"Battery level (input byte 10): {inputReport[10]}% (0x{inputReport[10]:X2})");
                 Console.WriteLine(result.Capabilities.OutputReportBytes > 0
                     ? "The device advertises a two-byte LED output report; it does not advertise rumble."
                     : "This collection advertises no output report.");

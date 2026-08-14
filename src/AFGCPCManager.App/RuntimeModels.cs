@@ -10,7 +10,8 @@ internal sealed record ControllerRowModel(
     uint? OutputDeviceId,
     string? Issue,
     byte? IdentificationLightMask = null,
-    GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput);
+    GamepadOutputMode OutputMode = GamepadOutputMode.DirectInput,
+    byte? BatteryPercentage = null);
 
 internal sealed record DiagnosticSnapshot(
     string Version,
@@ -47,6 +48,7 @@ internal sealed record DiagnosticSnapshot(
             + $"[{controller.StableId[..Math.Min(12, controller.StableId.Length)]}]: "
             + $"{(controller.IsConnected ? "connected" : "disconnected")}, "
             + $"output {controller.OutputDeviceId?.ToString() ?? "none"}, "
+            + $"battery {BatteryLevelDisplay.Format(controller.BatteryPercentage)}, "
             + $"lights {IdentificationLightDisplay.Format(controller.IdentificationLightMask)}"
             + (controller.Issue is null ? string.Empty : $", issue: {controller.Issue}")));
         lines.Add(string.Empty);

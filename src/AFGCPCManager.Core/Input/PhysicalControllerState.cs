@@ -10,7 +10,7 @@ public readonly record struct PhysicalControllerState(
     FireButtons Buttons,
     DPadDirection DPad,
     ConsumerButtons ConsumerButtons,
-    byte BatteryCandidate)
+    byte BatteryPercentage)
 {
     public static PhysicalControllerState Neutral { get; } = new(
         LeftX: 128,
@@ -22,5 +22,5 @@ public readonly record struct PhysicalControllerState(
         Buttons: FireButtons.None,
         DPad: DPadDirection.Neutral,
         ConsumerButtons: ConsumerButtons.None,
-        BatteryCandidate: 0);
+        BatteryPercentage: 0);
 }

@@ -660,7 +660,8 @@ internal sealed class BridgeRuntime : IAsyncDisposable
                     ? ControllerIdentificationLightPattern.ForRegistrationOrder(
                         controller.RegistrationOrder)
                     : null,
-                settings.Application.OutputMode))
+                settings.Application.OutputMode,
+                runtime?.BatteryPercentage))
             .ToArray();
         _lastRows = rows;
         ControllersChanged?.Invoke(this, rows);

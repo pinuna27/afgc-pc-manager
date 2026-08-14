@@ -14,6 +14,7 @@ internal sealed class ControllerRuntimeSession(
     private Task? _disposeTask;
 
     public uint DeviceId { get; } = deviceId;
+    public byte? BatteryPercentage => bridge.BatteryPercentage;
     public bool IsCompleted => _task?.IsCompleted == true;
 
     public void Start()

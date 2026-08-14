@@ -256,7 +256,7 @@ internal static class Program
         var form = new MainForm(new BridgeRuntime());
         form.ApplyRows([
             new ControllerRowModel("preview-controller", "Amazon Fire Game Controller",
-                1, true, 2, null, 0b0001),
+                1, true, 2, null, 0b0001, BatteryPercentage: 94),
             new ControllerRowModel("preview-controller-2", "Amazon Fire Game Controller",
                 2, false, null, "Reconnect required", 0b0010)
         ]);

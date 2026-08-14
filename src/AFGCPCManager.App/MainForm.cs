@@ -156,7 +156,7 @@ internal sealed class MainForm : Form
             Name = "Controller",
             HeaderText = "CONTROLLER",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 52,
+            FillWeight = 43,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -165,7 +165,18 @@ internal sealed class MainForm : Form
             HeaderText = "LIGHTS",
             ToolTipText = $"{IdentificationLightDisplay.OnGlyph} = light on    {IdentificationLightDisplay.OffGlyph} = light off",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 13,
+            FillWeight = 12,
+            MinimumWidth = UiTheme.Scale(_controllers, 84),
+            SortMode = DataGridViewColumnSortMode.NotSortable
+        });
+        _controllers.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Battery",
+            HeaderText = "BATTERY",
+            ToolTipText = "Battery level reported by the controller",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
+            FillWeight = 10,
+            MinimumWidth = UiTheme.Scale(_controllers, 90),
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -173,7 +184,7 @@ internal sealed class MainForm : Form
             Name = "Status",
             HeaderText = "STATUS",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 20,
+            FillWeight = 18,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
         _controllers.Columns.Add(new DataGridViewTextBoxColumn
@@ -181,7 +192,7 @@ internal sealed class MainForm : Form
             Name = "Output",
             HeaderText = "OUTPUT",
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill,
-            FillWeight = 15,
+            FillWeight = 17,
             MinimumWidth = 100,
             SortMode = DataGridViewColumnSortMode.NotSortable
         });
@@ -228,8 +239,9 @@ internal sealed class MainForm : Form
                 state = "Turn off, then on";
             int index = _controllers.Rows.Add(
                 $"Controller {row.RegistrationOrder}  ·  " +
-                VirtualControllerDisplayName.Format(row.DisplayName, row.OutputMode),
+                row.DisplayName,
                 IdentificationLightDisplay.Format(row.IdentificationLightMask),
+                BatteryLevelDisplay.Format(row.BatteryPercentage),
                 state,
                 row.OutputDeviceId is uint id
                     ? row.OutputMode == GamepadOutputMode.XInput
@@ -239,12 +251,18 @@ internal sealed class MainForm : Form
             DataGridViewRow gridRow = _controllers.Rows[index];
             gridRow.Tag = row.StableId;
             if (row.StableId == selectedId) selectedIndex = index;
-            gridRow.Cells[1].Style.ForeColor = row.IdentificationLightMask is null
+            gridRow.Cells["Lights"].Style.ForeColor = row.IdentificationLightMask is null
                 ? UiTheme.TextMuted : UiTheme.Primary;
-            gridRow.Cells[2].Style.ForeColor = row.Issue is not null
+            gridRow.Cells["Battery"].Style.ForeColor = row.BatteryPercentage switch
+            {
+                <= 25 => UiTheme.Warning,
+                <= 100 => UiTheme.Text,
+                _ => UiTheme.TextMuted
+            };
+            gridRow.Cells["Status"].Style.ForeColor = row.Issue is not null
                 ? UiTheme.Warning
                 : row.IsConnected ? UiTheme.Success : UiTheme.TextMuted;
-            gridRow.Cells[3].Style.ForeColor = UiTheme.TextMuted;
+            gridRow.Cells["Output"].Style.ForeColor = UiTheme.TextMuted;
         }
         bool hasRows = rows.Count > 0;
         _controllers.ClearSelection();

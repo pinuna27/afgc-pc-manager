@@ -9,4 +9,4 @@ public readonly record struct FireGamepadReport(
     byte RightTrigger,
     FireButtons Buttons,
     DPadDirection DPad,
-    byte BatteryCandidate);
+    byte BatteryPercentage);

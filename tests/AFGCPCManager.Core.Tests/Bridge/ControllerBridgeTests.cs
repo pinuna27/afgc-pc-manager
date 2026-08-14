@@ -19,7 +19,22 @@ public sealed class ControllerBridgeTests
         await bridge.RunAsync(TestContext.Current.CancellationToken);
         Assert.Contains(output.States, s => s.LeftTrigger == 255 && s.IsButtonPressed(1));
         Assert.Contains(output.States, s => s.IsButtonPressed(11));
+        Assert.Equal((byte?)96, bridge.BatteryPercentage);
         Assert.Equal(VirtualGamepadState.Neutral, output.States[^1]);
+    }
+
+    [Fact]
+    public async Task IgnoresOutOfRangeBatteryTelemetry()
+    {
+        var input = new FakeInput([
+            new byte[] { 1, 128, 127, 128, 127, 0, 0, 0, 0, 0, 255 }
+        ]);
+        await using var bridge = new ControllerBridge(input, new FakeOutput(),
+            new FakeConsumer(), new ControllerMappingProfile());
+
+        await bridge.RunAsync(TestContext.Current.CancellationToken);
+
+        Assert.Null(bridge.BatteryPercentage);
     }
 
     [Fact]
