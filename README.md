@@ -1,4 +1,4 @@
-# AFGC PC Manager
+# AFGC PC Manager - Amazon Fire TV Game Controller support for Windows
 
 AFGC PC Manager is an unofficial Windows app for using the first-generation
 Amazon Fire TV Game Controller as a standard Xbox (XInput) or vJoy
